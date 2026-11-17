@@ -7,7 +7,7 @@
       <stop offset="1" stop-color="#1E3A5F"/>
     </linearGradient>
     <filter id="tint" color-interpolation-filters="sRGB">
-      <feFlood flood-color="#015cf9" result="flood"/>
+      <feFlood flood-color="#00D9FF" result="flood"/>
       <feBlend mode="multiply" in="SourceGraphic" in2="flood" result="blend"/>
       <feComposite in="blend" in2="SourceGraphic" operator="in"/>
     </filter>

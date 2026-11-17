@@ -1,10 +1,11 @@
 import os
+import sys
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QProgressBar, QPushButton,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QSizePolicy,
 )
 
 from core.ffmpeg import probe_media
@@ -12,10 +13,10 @@ from core.video_cutter import ensure_cut_dir
 from core.workers import CutterWorker, ThumbnailWorker
 from ui.widgets.log_widget import LogWidget
 from ui.widgets.timeline_widget import TimelineWidget
+from ui.widgets.video_preview_widget import VideoPreviewWidget
 
 
 def _parse_time(text: str) -> float:
-    """Terima: 12 (detik), 1:23 (m:s), 01:02:03 (h:m:s), 1:02:03.500."""
     text = (text or "").strip()
     if not text:
         raise ValueError("kosong")
@@ -45,129 +46,215 @@ class CutterPage(QWidget):
         self.worker: CutterWorker | None = None
         self.thumb_worker: ThumbnailWorker | None = None
         self._duration = 0.0
+        self._video_path = ""
+
+        self._process_text = "Siap"
+        self._thumb_text = "Thumbnail 0/0 thumbnail siap"
+
+        self._preview_timer = QTimer()
+        self._preview_timer.setSingleShot(True)
+        self._preview_timer.setInterval(50)
+        self._preview_timer.timeout.connect(self._update_preview_frame)
+        self._pending_preview_time = 0.0
+
+        self._auto_stop_end: float | None = None
+
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        self.setMinimumSize(0, 0)
+
         self._build_ui()
+        self._wire_preview()
+
+    # ---------- wiring ----------
+    def _wire_preview(self):
+        pw = self.preview_widget
+        pw.play_clicked.connect(self._on_play_preview_clicked)
+        pw.position_changed.connect(self._on_player_position)
+        pw.duration_changed.connect(self.timeline.set_duration)
+
+        self.timeline.seek_requested.connect(pw.seek)
+        self.timeline.range_dragging.connect(self._on_range_dragging)
+
+    def _on_player_position(self, sec: float):
+        self.timeline.set_playhead(sec)
+        if self._auto_stop_end is not None and sec >= self._auto_stop_end:
+            end = self._auto_stop_end
+            self._auto_stop_end = None
+            self.preview_widget.pause()
+            self.timeline.set_playhead(end)
+
+    def _on_range_dragging(self, handle: str, start_sec: float, end_sec: float):
+        if not self.preview_widget.is_playing():
+            return
+        if handle == "start":
+            self._auto_stop_end = end_sec
+            self.preview_widget.seek_while_playing(start_sec)
+        elif handle == "end":
+            self._auto_stop_end = None
+            self.preview_widget.pause()
+
+    def _on_play_preview_clicked(self):
+        if self.preview_widget.is_playing():
+            self._auto_stop_end = None
+            self.preview_widget.pause()
+        else:
+            self._auto_stop_end = self.timeline.end_seconds()
+            self.preview_widget.play_from(self.timeline.start_seconds())
 
     # ---------- UI ----------
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(20, 20, 20, 20)
-        root.setSpacing(12)
+        root.setSpacing(8)
 
         header = QLabel("Video Cutter")
         header.setObjectName("header")
-        root.addWidget(header)
-        subtitle = QLabel("Potong klip dari file lokal (ffmpeg). Drag handle di timeline untuk memilih range.")
-        subtitle.setObjectName("subtitle")
-        root.addWidget(subtitle)
+        root.addWidget(header, stretch=0)
 
-        # Input file
-        root.addWidget(self._label("File Video Sumber"))
-        file_row = QHBoxLayout()
-        self.file_input = QLineEdit()
-        self.file_input.setPlaceholderText("Pilih file video...")
-        self.file_input.setReadOnly(True)
-        file_row.addWidget(self.file_input)
-        browse_btn = QPushButton("Browse…")
-        browse_btn.clicked.connect(self.browse_file)
-        file_row.addWidget(browse_btn)
-        root.addLayout(file_row)
+        editor_container = QFrame()
+        editor_container.setObjectName("editorContainer")
+        editor_container.setStyleSheet("""
+            #editorContainer {
+                background-color: #1a1a1a;
+                border-radius: 12px;
+                border: 1px solid #333;
+            }
+        """)
+        editor_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        editor_container.setMinimumSize(0, 0)
 
-        self.duration_label = QLabel("Durasi: -")
-        self.duration_label.setObjectName("detailLabel")
-        root.addWidget(self.duration_label)
+        editor_layout = QVBoxLayout(editor_container)
+        editor_layout.setContentsMargins(0, 0, 0, 0)
+        editor_layout.setSpacing(0)
 
-        # Timeline
-        root.addWidget(self._label("Timeline"))
+        self.file_label = QLabel("Belum ada file dipilih")
+        self.file_label.setObjectName("sourceFileLabel")
+        self.file_label.setWordWrap(True)
+        self.file_label.setFixedHeight(40)
+        self.file_label.setContentsMargins(12, 10, 12, 6)
+        self.file_label.setStyleSheet("""
+            #sourceFileLabel {
+                color: #e0e0e0;
+                font-size: 13px;
+                font-weight: 300;
+                background: transparent;
+            }
+        """)
+        self.file_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        editor_layout.addWidget(
+            self.file_label, stretch=0, alignment=Qt.AlignmentFlag.AlignTop
+        )
+
+        self.preview_widget = VideoPreviewWidget()
+        self.preview_widget.setMinimumHeight(200)
+        self.preview_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        editor_layout.addWidget(self.preview_widget, stretch=4)
+
         self.timeline = TimelineWidget()
         self.timeline.range_changed.connect(self._on_timeline_range_changed)
-        root.addWidget(self.timeline)
+        self.timeline.scrub_moved.connect(self._on_scrub_moved)
+        self.timeline.seek_requested.connect(self._on_seek_requested)
+        self.timeline.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        editor_layout.addWidget(self.timeline, stretch=1)
 
-        self.thumb_status = QLabel("Thumbnail: -")
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(1)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #2a2a2a;
+                border: none;
+                border-radius: 2px;
+                margin: 0px 8px;
+            }
+            QProgressBar::chunk {
+                background-color: #4caf50;
+                border-radius: 2px;
+            }
+        """)
+        editor_layout.addWidget(self.progress_bar, stretch=0)
+
+        root.addWidget(editor_container, stretch=1)
+
+        self.thumb_status = QLabel(
+            f"{self._process_text} | {self._thumb_text}"
+        )
         self.thumb_status.setObjectName("detailLabel")
-        root.addWidget(self.thumb_status)
+        root.addWidget(self.thumb_status, stretch=0)
 
-        # Start / End manual
+        # Baris waktu
         time_row = QHBoxLayout()
-        time_row.addWidget(self._label("Mulai"))
+
         self.start_input = QLineEdit()
-        self.start_input.setPlaceholderText("0:04.00")
+        self.start_input.setPlaceholderText("0:00.00")
+        self.start_input.setMaximumWidth(100)
+        self.start_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.start_input.editingFinished.connect(self._on_start_edit)
         time_row.addWidget(self.start_input)
 
-        time_row.addWidget(self._label("Akhir"))
         self.end_input = QLineEdit()
-        self.end_input.setPlaceholderText("0:12.61")
+        self.end_input.setPlaceholderText("0:00.00")
+        self.end_input.setMaximumWidth(100)
+        self.end_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.end_input.editingFinished.connect(self._on_end_edit)
         time_row.addWidget(self.end_input)
-        root.addLayout(time_row)
 
-        # Tombol bantu range
-        btn_range = QHBoxLayout()
-        set_start_btn = QPushButton("Set Start di Playhead")
-        set_start_btn.setToolTip("Set start ke posisi tengah seleksi (atau 0 bila kosong)")
-        set_start_btn.clicked.connect(self._set_start_mid)
-        set_end_btn = QPushButton("Set End di Playhead")
-        set_end_btn.clicked.connect(self._set_end_mid)
         reset_btn = QPushButton("Reset")
+        reset_btn.setObjectName("gnrlBtn")
         reset_btn.clicked.connect(self._reset_range)
-        btn_range.addWidget(set_start_btn)
-        btn_range.addWidget(set_end_btn)
-        btn_range.addWidget(reset_btn)
-        btn_range.addStretch()
-        root.addLayout(btn_range)
+        time_row.addWidget(reset_btn)
 
-        # Output
-        root.addWidget(self._label("Folder Output"))
-        out_row = QHBoxLayout()
-        self.output_input = QLineEdit(ensure_cut_dir())
-        self.output_input.setReadOnly(True)
-        out_row.addWidget(self.output_input)
-        open_btn = QPushButton("Buka Folder")
-        open_btn.clicked.connect(lambda: self._open_folder(self.output_input.text()))
-        out_row.addWidget(open_btn)
-        root.addLayout(out_row)
+        browse_btn = QPushButton("Source…")
+        browse_btn.setObjectName("gnrlBtn")
+        browse_btn.clicked.connect(self.browse_file)
+        time_row.addWidget(browse_btn, stretch=0)
 
-        self.reencode_cb = QCheckBox("Re-encode (akurat frame-by-frame; lebih lambat)")
-        root.addWidget(self.reencode_cb)
-
-        # Progress
-        progress_frame = QFrame()
-        progress_frame.setObjectName("progressFrame")
-        pl = QVBoxLayout(progress_frame)
-        pl.setContentsMargins(14, 12, 14, 12)
-        pl.setSpacing(8)
-        self.status_label = QLabel("Siap")
-        self.status_label.setObjectName("statusLabel")
-        pl.addWidget(self.status_label)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        pl.addWidget(self.progress_bar)
-        root.addWidget(progress_frame)
-
-        # Actions
-        btn_row = QHBoxLayout()
         self.start_btn = QPushButton("Mulai Potong")
         self.start_btn.setObjectName("primaryBtn")
         self.start_btn.clicked.connect(self.start_cut)
-        btn_row.addWidget(self.start_btn)
+        time_row.addWidget(self.start_btn, stretch=1)
+        time_row.addStretch()
+
+        self.reencode_cb = QCheckBox(
+            "Re-encode (akurat frame-by-frame; lebih lambat)"
+        )
+        root.addWidget(self.reencode_cb, stretch=0)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(0)
+        btn_row.setContentsMargins(0, 0, 0, 0)
 
         self.cancel_btn = QPushButton("Batalkan")
         self.cancel_btn.setObjectName("dangerBtn")
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.clicked.connect(self.cancel_cut)
-        btn_row.addWidget(self.cancel_btn)
 
         clear_btn = QPushButton("Bersihkan Log")
-        clear_btn.setObjectName("cleanLogBtn")
         clear_btn.clicked.connect(lambda: self.log_output.clear())
-        btn_row.addWidget(clear_btn)
-        btn_row.addStretch()
-        root.addLayout(btn_row)
+        clear_btn.setObjectName("cleanLogBtn")
+        clear_btn.setEnabled(True)
 
-        # Log
-        root.addWidget(self._label("Log"))
+        btn_row.addWidget(self.cancel_btn)
+        btn_row.addWidget(clear_btn)
+
+        time_row.addLayout(btn_row)
+        root.addLayout(time_row)
+
+        root.addWidget(self._label("Log"), stretch=0)
         self.log_output = LogWidget()
-        root.addWidget(self.log_output, stretch=1)
+        self.log_output.setFixedHeight(150)
+        root.addWidget(self.log_output, stretch=0)
 
     @staticmethod
     def _label(text: str) -> QLabel:
@@ -178,24 +265,30 @@ class CutterPage(QWidget):
     @staticmethod
     def _open_folder(path: str):
         try:
+            if not path or not os.path.isdir(path):
+                return
             if os.name == "nt":
-                os.startfile(path)  # type: ignore[attr-defined]
-            elif os.uname().sysname == "Darwin":
+                os.startfile(path)
+            elif sys.platform == "darwin":
                 os.system(f'open "{path}"')
             else:
                 os.system(f'xdg-open "{path}"')
         except Exception:
             pass
 
-    # ---------- file loading ----------
+    # ---------- file ----------
     def browse_file(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Pilih Video", "",
+            self,
+            "Pilih Video",
+            "",
             "Video Files (*.mp4 *.mkv *.avi *.mov *.webm *.flv *.ts);;All Files (*)",
         )
         if not path:
             return
-        self.file_input.setText(path)
+
+        self._video_path = path
+        self.file_label.setText(f"{path}")
         self.log("=" * 60)
         self.log(f"Sumber: {path}")
 
@@ -204,58 +297,104 @@ class CutterPage(QWidget):
             self.thumb_worker.wait(1000)
 
         self.timeline.clear_thumbnails()
+        self.preview_widget.clear()
 
         try:
             dur, _, has_video = probe_media(path)
         except Exception as exc:
-            self.duration_label.setText(f"Durasi: gagal probe ({exc})")
+            self.file_label.setText(
+                f"Sumber: {path} — gagal probe ({exc})"
+            )
             self._duration = 0.0
             self.timeline.set_duration(0.0)
             return
 
         if not has_video:
-            self.duration_label.setText("Durasi: file tidak memiliki video stream")
+            self.file_label.setText(
+                f"Sumber: {path} — file tidak memiliki video stream"
+            )
             self._duration = 0.0
             self.timeline.set_duration(0.0)
             return
 
         self._duration = dur
-        self.duration_label.setText(f"Durasi: {_fmt_time(dur)}")
-        self.timeline.set_duration(dur)
         self.timeline.set_range(0.0, dur)
         self.start_input.setText(_fmt_time(0.0))
         self.end_input.setText(_fmt_time(dur))
 
-        # mulai thumbnail worker
+        self.preview_widget.load(path)
+
         from core import thumbnails
         times = thumbnails.plan_thumbnail_times(dur)
         self.timeline.set_thumbnails_count(len(times))
-        self.thumb_status.setText(f"Memuat 0/{len(times)} thumbnail...")
+        self._update_thumb_status(f"Memuat 0/{len(times)} thumbnail")
 
         self.thumb_worker = ThumbnailWorker(path, dur, len(times))
         self.thumb_worker.thumbnail_ready.connect(self._on_thumbnail_ready)
         self.thumb_worker.finished_signal.connect(self._on_thumbnails_done)
         self.thumb_worker.start()
 
+        self._request_preview_update(0.0)
+
+    # ---------- thumbnail callbacks ----------
     def _on_thumbnail_ready(self, index: int, image):
         self.timeline.set_thumbnail_at(index, image)
-        # update status
-        loaded = sum(1 for p in self.timeline._thumbs if not p.isNull())
-        self.thumb_status.setText(f"Memuat {loaded}/{len(self.timeline._thumbs)} thumbnail...")
+        loaded = self.timeline.loaded_thumbnail_count()
+        total = self.timeline.thumbnail_count()
+        self._update_thumb_status(f"Memuat {loaded}/{total} thumbnail")
+        if index == 0:
+            self.preview_widget.set_thumbnail(image)
 
     def _on_thumbnails_done(self, success: bool, message: str):
-        self.thumb_status.setText(f"Thumbnail: {message}")
+        self._update_thumb_status(f"Thumbnail {message}")
         self.thumb_worker = None
 
-    # ---------- range sync ----------
+    # ---------- status ----------
+    def _set_process_text(self, text: str):
+        self._process_text = text or "-"
+        self.thumb_status.setText(
+            f"{self._process_text} | {self._thumb_text}"
+        )
+
+    def _update_thumb_status(self, thumbnail_text: str):
+        self._thumb_text = thumbnail_text
+        self.thumb_status.setText(
+            f"{self._process_text} | {self._thumb_text}"
+        )
+
+    # ---------- preview / timeline ----------
+    def _on_scrub_moved(self, seconds: float):
+        self.preview_widget.set_time_info(seconds, self._duration)
+        self._pending_preview_time = seconds
+        self._preview_timer.start()
+
+    def _on_seek_requested(self, seconds: float):
+        self.preview_widget.set_time_info(seconds, self._duration)
+
+    def _request_preview_update(self, seconds: float):
+        self._pending_preview_time = seconds
+        self.preview_widget.set_time_info(seconds, self._duration)
+        self._preview_timer.start()
+
+    def _update_preview_frame(self):
+        if self._duration <= 0:
+            return
+        pix = self.timeline.thumbnail_nearest(self._pending_preview_time)
+        if not pix.isNull():
+            self.preview_widget.show_frame(pix.toImage())
+
     def _on_timeline_range_changed(self, start: float, end: float):
-        # sinkron ke line edit (hindari feedback loop dengan blockSignals)
         self.start_input.blockSignals(True)
         self.end_input.blockSignals(True)
         self.start_input.setText(_fmt_time(start))
         self.end_input.setText(_fmt_time(end))
         self.start_input.blockSignals(False)
         self.end_input.blockSignals(False)
+
+        if self.preview_widget.is_playing():
+            if self._auto_stop_end is None or abs(end - self._auto_stop_end) > 1e-3:
+                self._auto_stop_end = None
+                self.preview_widget.pause()
 
     def _on_start_edit(self):
         try:
@@ -264,7 +403,9 @@ class CutterPage(QWidget):
             self.start_input.setText(_fmt_time(self.timeline.start_seconds()))
             return
         self.timeline.set_range(val, self.timeline.end_seconds())
-        self._on_timeline_range_changed(self.timeline.start_seconds(), self.timeline.end_seconds())
+        self._on_timeline_range_changed(
+            self.timeline.start_seconds(), self.timeline.end_seconds()
+        )
 
     def _on_end_edit(self):
         try:
@@ -273,32 +414,21 @@ class CutterPage(QWidget):
             self.end_input.setText(_fmt_time(self.timeline.end_seconds()))
             return
         self.timeline.set_range(self.timeline.start_seconds(), val)
-        self._on_timeline_range_changed(self.timeline.start_seconds(), self.timeline.end_seconds())
-
-    def _set_start_mid(self):
-        s = self.timeline.start_seconds()
-        e = self.timeline.end_seconds()
-        mid = (s + e) / 2
-        self.timeline.set_range(mid, e)
-        self._on_timeline_range_changed(self.timeline.start_seconds(), self.timeline.end_seconds())
-
-    def _set_end_mid(self):
-        s = self.timeline.start_seconds()
-        e = self.timeline.end_seconds()
-        mid = (s + e) / 2
-        self.timeline.set_range(s, mid)
-        self._on_timeline_range_changed(self.timeline.start_seconds(), self.timeline.end_seconds())
+        self._on_timeline_range_changed(
+            self.timeline.start_seconds(), self.timeline.end_seconds()
+        )
 
     def _reset_range(self):
         self.timeline.set_range(0.0, self._duration)
         self._on_timeline_range_changed(0.0, self._duration)
 
-    # ---------- cut ----------
+    # ---------- logging ----------
     def log(self, msg: str):
         self.log_output.append_log(msg)
 
+    # ---------- cut ----------
     def start_cut(self):
-        src = self.file_input.text().strip()
+        src = self._video_path or ""
         if not src or not os.path.isfile(src):
             QMessageBox.warning(self, "Peringatan", "Pilih file video yang valid.")
             return
@@ -312,15 +442,17 @@ class CutterPage(QWidget):
             return
 
         out_dir = ensure_cut_dir()
-        self.output_input.setText(out_dir)
+        self.log(f"Output: {out_dir}")
 
         self.progress_bar.setValue(0)
-        self.status_label.setText("Memulai pemotongan...")
+        self._set_process_text("Memulai pemotongan...")
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.log("-" * 40)
         self.log(f"Range : {_fmt_time(start)} → {_fmt_time(end)}")
-        self.log(f"Mode  : {'re-encode' if self.reencode_cb.isChecked() else 'copy'}")
+        self.log(
+            f"Mode  : {'re-encode' if self.reencode_cb.isChecked() else 'copy'}"
+        )
 
         self.worker = CutterWorker(
             input_path=src,
@@ -337,23 +469,23 @@ class CutterPage(QWidget):
     def cancel_cut(self):
         if self.worker and self.worker.isRunning():
             self.worker.cancel()
-            self.status_label.setText("Membatalkan...")
+            self._set_process_text("Membatalkan...")
             self.log("Permintaan pembatalan dikirim.")
             self.cancel_btn.setEnabled(False)
 
     def on_progress(self, percent: float, speed: str, eta: str, status: str):
         self.progress_bar.setValue(int(percent))
-        self.status_label.setText(status)
+        self._set_process_text(status)
 
     def on_finished(self, success: bool, message: str):
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         if success:
             self.progress_bar.setValue(100)
-            self.status_label.setText("Selesai ✓")
+            self._set_process_text("Selesai ✓")
             self.log(f"File tersimpan: {message}")
         else:
-            self.status_label.setText("Gagal / Dibatalkan")
+            self._set_process_text("Gagal / Dibatalkan")
             self.log(f"Gagal: {message}")
         self.worker = None
 
