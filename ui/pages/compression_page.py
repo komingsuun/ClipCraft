@@ -104,6 +104,7 @@ class CompressionPage(QWidget):
         # Log
         root.addWidget(self._label("Log"))
         self.log_output = LogWidget()
+        self.log_output.setMaximumHeight(150)
         root.addWidget(self.log_output, stretch=1)
 
     @staticmethod

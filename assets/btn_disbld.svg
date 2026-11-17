@@ -3,21 +3,21 @@
 <g transform="matrix(1.0390 0 0 1.0390 -2.494 -2.494)">
   <defs>
     <linearGradient id="capFlatNavyFace01" x1="64" y1="44" x2="64" y2="84" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#3A5266"/>
-      <stop offset="1" stop-color="#1E3A52"/>
+      <stop offset="0" stop-color="#4A6FA5"/>
+      <stop offset="1" stop-color="#1E3A5F"/>
     </linearGradient>
     <filter id="tint" color-interpolation-filters="sRGB">
-      <feFlood flood-color="#64748b" result="flood"/>
+      <feFlood flood-color="#8f8f8f" result="flood"/>
       <feBlend mode="multiply" in="SourceGraphic" in2="flood" result="blend"/>
       <feComposite in="blend" in2="SourceGraphic" operator="in"/>
     </filter>
   </defs>
 
   <rect x="8" y="44" width="112" height="40" rx="10" ry="10"
-        fill="url(#capFlatNavyFace01)" stroke="#2a4a63" stroke-width="1.75"/>
+        fill="url(#capFlatNavyFace01)" stroke="#000000" stroke-width="1.75"/>
 
   <rect x="18" y="49" width="92" height="11" rx="3" ry="3"
-        fill="#FFFFFF" fill-opacity="0.12"/>
+        fill="#FFFFFF" fill-opacity="0.28"/>
 </g>
 </g>
 </svg>

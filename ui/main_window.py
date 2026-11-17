@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QTimer
 from PySide6.QtGui import QPixmap, QGuiApplication
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton,
@@ -30,10 +30,20 @@ QWidget {
 
 /* ---- Root frame: wajah window rounded ---- */
 QFrame#rootFrame {
-    background-color: #0f172a;
+    background-color: #1e293b;
     border: 1px solid #1e293b;
     border-radius: 12px;
 }
+
+QFrame#titleBarFrame {
+                background-color: rgba(15, 23, 42, 64);
+                border: none;
+            }
+            
+QFrame#mainFrame {
+                background-color: rgba(15, 23, 42, 64);
+                border: none;
+            }            
 
 QLabel#header { font-size: 24px; font-weight: 700; color: #38bdf8; }
 QLabel#subtitle { color: #94a3b8; margin-bottom: 6px; }
@@ -129,6 +139,44 @@ QLabel#titleBarIcon {
     padding-right: 6px;
 }
 
+QPushButton#media_play {
+    background-color: transparent;
+    border: px solid transparent;
+    background-image: url(assets/btn_media.svg);
+    background-position: center;
+    background-repeat: no-repeat;
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 15px;
+    min-width: 100px;
+    max-width: 100px;
+    min-height: 100px;
+    max-height: 100px;
+}
+QPushButton#media_play:hover {
+    background-image: url(assets/btn_mediaHover.svg);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: transparent;
+    color: black; 
+}
+QPushButton#media_play:disabled {
+    background-image: url(assets/btn_mediaDisbld.svg);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: transparent;
+    color: black; 
+}
+QPushButton#media_play:pressed {
+    background-image: url(assets/btn_mediaPressed.svg);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: transparent;
+    color: black; 
+}
+
 QPushButton#primaryBtn {
     background-color: transparent;
     border: px solid transparent;
@@ -150,12 +198,14 @@ QPushButton#primaryBtn:hover {
     background-position: center;
     background-repeat: no-repeat;
     background-color: transparent; 
+    color: black;
 }
 QPushButton#primaryBtn:disabled {
     background-image: url(assets/btn_disbld.svg);
     background-position: center;
     background-repeat: no-repeat;
-    background-color: transparent; 
+    background-color: transparent;
+    color: black; 
 }
 
 QPushButton#dangerBtn {
@@ -167,7 +217,7 @@ QPushButton#dangerBtn {
     border-radius: 8px;
     color: white;
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 500;
     padding: 15px;
     min-width: 130px;
     max-width: 130px;
@@ -178,13 +228,46 @@ QPushButton#dangerBtn:hover {
     background-image: url(assets/btn_Hover.svg);
     background-position: center;
     background-repeat: no-repeat;
-    background-color: transparent; 
+    background-color: transparent;
+    color: black; 
 }
 QPushButton#dangerBtn:disabled {
     background-image: url(assets/btn_disbld.svg);
     background-position: center;
     background-repeat: no-repeat;
-    background-color: transparent; 
+    background-color: transparent;
+    color: black; 
+}
+
+QPushButton#gnrlBtn {
+    background-color: transparent;
+    border: transparent;
+    background-image: url(assets/btn_gnrl.svg);
+    background-position: center;
+    background-repeat: no-repeat;
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+    padding: 15px;
+    min-width: 130px;
+    max-width: 130px;
+    min-height: 40px;
+    max-height: 40px;
+}
+QPushButton#gnrlBtn:hover {
+    background-image: url(assets/btn_Hover.svg);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: transparent;
+    color: black; 
+}
+QPushButton#gnrlBtn:disabled {
+    background-image: url(assets/btn_disbld.svg);
+    background-position: center;
+    background-repeat: no-repeat;
+    background-color: transparent;
+    color: black; 
 }
 
 QPushButton#cleanLogBtn {
@@ -194,9 +277,9 @@ QPushButton#cleanLogBtn {
     background-position: center;
     background-repeat: no-repeat;
     border-radius: 8px;
-    color: black;
+    color: white;
     font-size: 14px;
-    font-weight: 700;;
+    font-weight: 500;;
     font-size: 14px;;
     font-size: 14px;
     font-weight: 700;
@@ -210,13 +293,15 @@ QPushButton#cleanLogBtn:hover {
     background-image: url(assets/btn_Hover.svg);
     background-position: center;
     background-repeat: no-repeat;
-    background-color: transparent; 
+    background-color: transparent;
+    color: black; 
 }
 QPushButton#cleanLogBtn:disabled {
     background-image: url(assets/btn_disbld.svg);
     background-position: center;
     background-repeat: no-repeat;
-    background-color: transparent; 
+    background-color: transparent;
+    color: black; 
 }
 
 QPushButton#titleBarCloseBtn {
@@ -305,73 +390,84 @@ QWidget#settingsPage {
 }
 """
 
-
 class CustomTitleBar(QWidget):
-    """Title bar kustom: icon + judul + tombol window control."""
+    """Title bar kustom dengan QFrame sebagai background container."""
 
     HEIGHT = 40
 
     def __init__(self, window: "MainWindow", title: str = "ClipCraft"):
         super().__init__(window)
+
         self._window = window
-        self.setObjectName("titleBar")
         self.setFixedHeight(self.HEIGHT)
 
-        # Title bar transparan — background gelap berasal dari rootFrame
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        # Frame pembungkus seluruh UI
+        self.frame = QFrame(self)
+        self.frame.setObjectName("titleBarFrame")
 
-        inner = QHBoxLayout(self)
+        # Layout utama widget
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self.frame)
+
+        # Layout isi frame
+        inner = QHBoxLayout(self.frame)
         inner.setContentsMargins(0, 0, 0, 0)
         inner.setSpacing(0)
 
         # Icon
         icon = QLabel()
         icon.setObjectName("titleBarIcon")
+
         pixmap = QPixmap("./assets/clip_craft_square.png")
         if not pixmap.isNull():
             pixmap = pixmap.scaled(
-                22, 22, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                22, 22,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
             )
             icon.setPixmap(pixmap)
+
         icon.setFixedSize(40, self.HEIGHT)
-        icon.setAlignment(Qt.AlignCenter)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         inner.addWidget(icon)
 
-        # Title text
+        # Title
         self.title_label = QLabel(title)
         self.title_label.setObjectName("titleBarText")
-        # self.title_label.setStyleSheet("background: transparent;")
         inner.addWidget(self.title_label)
 
         inner.addStretch()
 
-        # Window control buttons
+        # Window controls
         self.btn_min = self._win_button("—", "winBtn")
         self.btn_max = self._win_button("□", "winBtn")
-        self.btn_close = self._win_button("✕", "closeBtn")
-        self.btn_close.setObjectName("titleBarCloseBtn")
-        inner.addWidget(self.btn_min)
-
-        self.btn_min.clicked.connect(self._window.showMinimized)
-        self.btn_max.clicked.connect(self._toggle_max)
-        self.btn_close.clicked.connect(self._window.close)
+        self.btn_close = self._win_button("✕", "titleBarCloseBtn")
 
         inner.addWidget(self.btn_min)
         inner.addWidget(self.btn_max)
         inner.addWidget(self.btn_close)
 
-        # Update tombol maximize saat state berubah
+        # Signals
+        self.btn_min.clicked.connect(self._window.showMinimized)
+        self.btn_max.clicked.connect(self._toggle_max)
+        self.btn_close.clicked.connect(self._window.close)
+
         self._window.windowStateChanged = self._on_state_changed
 
-    # ---- helpers ----
     @staticmethod
     def _win_button(text: str, obj_name: str) -> QPushButton:
         btn = QPushButton(text)
         btn.setObjectName(obj_name)
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setFocusPolicy(Qt.NoFocus)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn.setFixedSize(36, 30)
         return btn
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.frame.setGeometry(self.rect())
 
     def _toggle_max(self):
         if self._window.isMaximized():
@@ -387,9 +483,9 @@ class CustomTitleBar(QWidget):
             self.btn_max.setText("□")
             self.btn_max.setToolTip("Maximize")
 
-    # ---- drag via system move (metode yang sukses) ----
+    # Drag window
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             window_handle = self._window.windowHandle()
             if window_handle is not None:
                 window_handle.startSystemMove()
@@ -404,28 +500,38 @@ class CustomTitleBar(QWidget):
         event.accept()
 
     def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._toggle_max()
             event.accept()
-
+        else:
+            super().mouseDoubleClickEvent(event)
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+
         self.setWindowTitle("ClipCraft")
         self.resize(960, 700)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setStyleSheet(STYLESHEET)
 
-        # ==== Frameless + translucent ====
-        self.setWindowFlags(
-            Qt.Window | Qt.FramelessWindowHint | Qt.WindowMinMaxButtonsHint
+        # ==== Main Frame: pembungkus utama ====
+        self.main_frame = QFrame()
+        self.main_frame.setObjectName("rootFrame")
+        self.main_frame.setAttribute(
+            Qt.WidgetAttribute.WA_StyledBackground, True
         )
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setCentralWidget(self.main_frame)
 
-        # ==== Root frame: wajah window rounded ====
+        main_layout = QVBoxLayout(self.main_frame)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # ==== Root Frame: wajah window ====
         self.root_frame = QFrame()
         self.root_frame.setObjectName("rootFrame")
-        self.root_frame.setStyleSheet(STYLESHEET)
-        self.setCentralWidget(self.root_frame)
+
+        main_layout.addWidget(self.root_frame)
 
         root_layout = QVBoxLayout(self.root_frame)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -440,24 +546,30 @@ class MainWindow(QMainWindow):
         body_layout = QHBoxLayout(body)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
+
         root_layout.addWidget(body, stretch=1)
 
-        # Sidebar
+        # ==== Sidebar ====
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(220)
+
         side_layout = QVBoxLayout(sidebar)
         side_layout.setContentsMargins(12, 16, 12, 16)
         side_layout.setSpacing(6)
 
         brand = QLabel()
         brand.setObjectName("brand")
+
         pixmap = QPixmap("./assets/clip_craft.png")
         if not pixmap.isNull():
             pixmap = pixmap.scaled(
-                150, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                150, 50,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
             )
             brand.setPixmap(pixmap)
+
         brand.setScaledContents(False)
         brand.setAutoFillBackground(False)
 
@@ -467,49 +579,83 @@ class MainWindow(QMainWindow):
         self.btn_compression = self._nav_button("Video Compression")
         self.btn_cutter = self._nav_button("Video Cutter")
         self.btn_settings = self._nav_button("Settings")
-        for b in (self.btn_downloader, self.btn_compression,
-                  self.btn_cutter, self.btn_settings):
+
+        for b in (
+            self.btn_downloader,
+            self.btn_compression,
+            self.btn_cutter,
+            self.btn_settings
+        ):
             side_layout.addWidget(b)
+
         side_layout.addStretch()
-        side_layout.addWidget(QLabel("v0.1 — ClipCraft", objectName="detailLabel"))
+        side_layout.addWidget(
+            QLabel("v0.1 — ClipCraft", objectName="detailLabel")
+        )
 
         body_layout.addWidget(sidebar)
 
-        # Pages
+        # ==== Pages ====
         self.pages = QStackedWidget()
+
         self.page_downloader = DownloaderPage()
         self.page_compression = CompressionPage()
         self.page_cutter = CutterPage()
         self.page_settings = SettingsPage()
-        for p in (self.page_downloader, self.page_compression,
-                  self.page_cutter, self.page_settings):
+
+        for p in (
+            self.page_downloader,
+            self.page_compression,
+            self.page_cutter,
+            self.page_settings
+        ):
             self.pages.addWidget(p)
+
         body_layout.addWidget(self.pages, stretch=1)
 
-        # Resize grip di pojok kanan bawah
+        # ==== Resize grip ====
         self.size_grip = QSizeGrip(self.root_frame)
 
-        # Wire navigation
-        self.btn_downloader.clicked.connect(lambda: self._go(0, self.btn_downloader))
-        self.btn_compression.clicked.connect(lambda: self._go(1, self.btn_compression))
-        self.btn_cutter.clicked.connect(lambda: self._go(2, self.btn_cutter))
-        self.btn_settings.clicked.connect(lambda: self._go(3, self.btn_settings))
+        # ==== Navigation ====
+        self.btn_downloader.clicked.connect(
+            lambda: self._go(0, self.btn_downloader)
+        )
+        self.btn_compression.clicked.connect(
+            lambda: self._go(1, self.btn_compression)
+        )
+        self.btn_cutter.clicked.connect(
+            lambda: self._go(2, self.btn_cutter)
+        )
+        self.btn_settings.clicked.connect(
+            lambda: self._go(3, self.btn_settings)
+        )
 
         self._go(0, self.btn_downloader)
 
-        self._center_on_screen()
 
     def _center_on_screen(self):
-        screen = QGuiApplication.screenAt(self.pos()) or QGuiApplication.primaryScreen()
+        screen = (
+            QGuiApplication.screenAt(self.pos())
+            or QGuiApplication.primaryScreen()
+        )
         if screen is None:
             return
+
         geo = screen.availableGeometry()
         frame = self.frameGeometry()
         frame.moveCenter(geo.center())
         self.move(frame.topLeft())
 
+    def showEvent(self, event):
+        super().showEvent(event)
+
+        if not getattr(self, "_centered", False):
+            self._centered = True
+            QTimer.singleShot(0, self._center_on_screen)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+
         if hasattr(self, "size_grip"):
             self.size_grip.move(
                 self.root_frame.width() - self.size_grip.width(),
@@ -522,30 +668,43 @@ class MainWindow(QMainWindow):
         btn = QPushButton(text)
         btn.setObjectName("navBtn")
         btn.setCheckable(True)
-        btn.setCursor(Qt.PointingHandCursor)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
         return btn
 
     def _go(self, index: int, btn: QPushButton):
-        for b in (self.btn_downloader, self.btn_compression,
-                  self.btn_cutter, self.btn_settings):
+        for b in (
+            self.btn_downloader,
+            self.btn_compression,
+            self.btn_cutter,
+            self.btn_settings
+        ):
             b.setChecked(b is btn)
+
         self.pages.setCurrentIndex(index)
 
     def closeEvent(self, event):
         active = []
+
         if self.page_downloader.has_active_worker():
             active.append("Downloader")
+
         if self.page_compression.has_active_worker():
             active.append("Video Compression")
+
         if self.page_cutter.has_active_worker():
             active.append("Video Cutter")
+
         if active and load_config()["ui"]["confirm_on_exit"]:
             reply = QMessageBox.question(
-                self, "Konfirmasi",
-                f"Proses masih berjalan ({', '.join(active)}). Batalkan dan keluar?",
-                QMessageBox.Yes | QMessageBox.No,
+                self,
+                "Konfirmasi",
+                f"Proses masih berjalan ({', '.join(active)}). "
+                "Batalkan dan keluar?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
             )
-            if reply == QMessageBox.Yes:
+
+            if reply == QMessageBox.StandardButton.Yes:
                 self.page_downloader.request_cancel()
                 self.page_compression.request_cancel()
                 self.page_cutter.request_cancel()
@@ -557,4 +716,5 @@ class MainWindow(QMainWindow):
                 self.page_downloader.request_cancel()
                 self.page_compression.request_cancel()
                 self.page_cutter.request_cancel()
+
             event.accept()
