@@ -93,7 +93,11 @@ yt_dlp_plugins/
     └── threads.py
 ```
 
-The plugin is loaded by yt-dlp through its plugin discovery mechanism.
+The plugin is loaded by yt-dlp through its plugin discovery mechanism. I put patch for threads.com video download error here, please don't forget to replace the real threads.py in your venv directory in my case I use .venv: 
+
+```
+cp yt_dlp_plugins/extractor/threads.py /your_venv_directory/.venv/lib/python3.12/site-packages/yt_dlp_plugins/extractor/threads.py
+```
 
 ### Limitations
 
@@ -105,14 +109,26 @@ The plugin is loaded by yt-dlp through its plugin discovery mechanism.
 
 📸 Screenshot
 
-Video Downloader - downloader.py
+## Video Downloader
 
-<img width="1086" height="825" alt="Screenshot from 2026-11-09 18-32-21" src="https://github.com/user-attachments/assets/79fa09af-b73b-4070-9d19-5b5f652a3899" />
+<img width="960" height="540" alt="ClipCraft_012" src="https://github.com/user-attachments/assets/b7aa195a-0180-4e68-b408-8effefb3797e" />
+
+For YouTube video **ClipCart** has special ability by downloading "The Most Played Segment", user just check the checkbox under the "Folder Keluaran" then the application automaticaly check if available or not.
+
+If user use this range segment then ClipCart will set to download only this segment.
+
+## Video Compressor
+
+<img width="960" height="540" alt="ClipCraft_013" src="https://github.com/user-attachments/assets/6f3f3abf-e157-4c99-a010-fef6b09bdfbb" />
+
+## Video Cutter
+
+<img width="960" height="540" alt="ClipCraft_015" src="https://github.com/user-attachments/assets/9f5fc8bf-ebd2-4653-b7c7-b3ba5e1634c7" />
 
 Video Downloader - main.py
  
 
-<img width="1784" height="758" alt="Selection_1330" src="https://github.com/user-attachments/assets/72d079de-9bc3-44d4-83d8-ae887905be1a" />
+<img width="960" height="540" alt="Selection_1330" src="https://github.com/user-attachments/assets/72d079de-9bc3-44d4-83d8-ae887905be1a" />
  
 
 **Just another vibe-coded project.** 😎
