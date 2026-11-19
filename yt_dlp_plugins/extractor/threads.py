@@ -35,7 +35,7 @@ _MEDIA_KEYS = {'video_versions', 'video_dash_manifest', 'image_versions2', 'caro
 # media_type values seen in the post JSON.
 _MEDIA_TYPE_IMAGE = 1
 _MEDIA_TYPE_CAROUSEL = 8
-
+_MEDIA_TYPE_SHARE = 19
 
 class ThreadsIE(InfoExtractor):
     IE_NAME = 'threads'
@@ -222,8 +222,10 @@ class ThreadsIE(InfoExtractor):
         }
         title = (caption or '').split('\n')[0][:72] or (
             f'Threads video by {uploader_id}' if uploader_id else f'Threads video {video_id}')
+
         # DEBUG: Inspect target post media structure
         self.write_debug(f'Target post keys: {sorted(post.keys())}')
+
         # DEBUG: Inspect quoted attachment completely
         quoted = traverse_obj(post, (
             'text_post_app_info',
@@ -363,13 +365,10 @@ class ThreadsIE(InfoExtractor):
                 entries, playlist_id=video_id, playlist_title=title,
                 playlist_description=caption, multi_video=True)
 
-
         # Extract media from the original post first.
         entry = self._media_entry(post, video_id)
 
         # If the main post has no video, inspect its quoted attachment.
-        media_post = post
-
         if entry is None:
             quoted = traverse_obj(post, (
                 'text_post_app_info',
@@ -389,7 +388,6 @@ class ThreadsIE(InfoExtractor):
                     )
 
                     entry = quoted_entry
-                    media_post = quoted
                     video_id = quoted_id
 
                     # Use metadata belonging to the actual video.
@@ -429,17 +427,73 @@ class ThreadsIE(InfoExtractor):
                         )
                     )
 
+        # Fallback: media_type=19 (share/quote post). Media aktual berada di
+        # text_post_app_info.linked_inline_media, bukan di field top-level.
+        if entry is None and int_or_none(post.get('media_type')) == _MEDIA_TYPE_SHARE:
+            inline_media = traverse_obj(post, (
+                'text_post_app_info', 'linked_inline_media', {dict},
+            ))
+            if inline_media:
+                self.write_debug(
+                    'media_type=19, mencoba mengekstrak media dari linked_inline_media')
+                inline_id = inline_media.get('code') or video_id
+                inline_entry = self._media_entry(inline_media, inline_id)
+                if inline_entry:
+                    self.write_debug(
+                        f'Using linked_inline_media video: {inline_id}')
+                    entry = inline_entry
+                    video_id = inline_id
+
+                    # Metadata milik media inline, bukan post share.
+                    inline_user = inline_media.get('user') or {}
+                    inline_caption = (
+                        traverse_obj(inline_media, ('caption', 'text'))
+                        or inline_media.get('accessibility_caption')
+                    )
+                    uploader_id = inline_user.get('username') or uploader_id
+                    common = {
+                        'description': inline_caption,
+                        'uploader': inline_user.get('full_name') or uploader_id,
+                        'uploader_id': uploader_id,
+                        'uploader_url': (
+                            f'https://www.threads.com/@{uploader_id}'
+                            if uploader_id else None
+                        ),
+                        'timestamp': int_or_none(inline_media.get('taken_at')),
+                        'like_count': int_or_none(inline_media.get('like_count')),
+                        'webpage_url': (
+                            url_or_none(inline_media.get('canonical_url'))
+                            or url_or_none(inline_media.get('permalink'))
+                            or url
+                        ),
+                    }
+                    title = (
+                        (inline_caption or '').split('\n')[0][:72]
+                        or (
+                            f'Threads video by {uploader_id}'
+                            if uploader_id
+                            else f'Threads video {video_id}'
+                        )
+                    )
+
+        # Baru di sini kita menyerah.
         if entry is None:
+            media_type = int_or_none(post.get('media_type'))
             kind = (
                 'an image post'
-                if post.get('media_type') == _MEDIA_TYPE_IMAGE
+                if media_type == _MEDIA_TYPE_IMAGE
                 else 'a carousel'
-                if post.get('media_type') == _MEDIA_TYPE_CAROUSEL
+                if media_type == _MEDIA_TYPE_CAROUSEL
+                else 'a share/quote post (media_type=19)'
+                if media_type == _MEDIA_TYPE_SHARE
                 else 'text-only or unsupported'
             )
-
+            present = sorted(post.keys() & _MEDIA_KEYS)
             raise ExtractorError(
-                f'Post "{video_id}" has no downloadable video ({kind})',
+                f'Post "{video_id}" has no downloadable video ({kind}); '
+                f'media_type={media_type!r}, '
+                f'media keys present={present or "none"}. '
+                'If the post does have a video, Meta likely changed the crawler payload.',
                 expected=True)
 
         entry.update(common)
