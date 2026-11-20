@@ -657,11 +657,21 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
 
         if hasattr(self, "size_grip"):
-            self.size_grip.move(
-                self.root_frame.width() - self.size_grip.width(),
-                self.root_frame.height() - self.size_grip.height(),
-            )
-            self.size_grip.raise_()
+            QTimer.singleShot(0, self._position_size_grip)
+
+    def _position_size_grip(self):
+        if not hasattr(self, "size_grip"):
+            return
+
+        self.size_grip.adjustSize()
+
+        self.size_grip.move(
+            self.root_frame.rect().bottomRight()
+            - QPoint(self.size_grip.width(), self.size_grip.height())
+            + QPoint(1, 1)
+        )
+
+        self.size_grip.raise_()
 
     @staticmethod
     def _nav_button(text: str) -> QPushButton:
