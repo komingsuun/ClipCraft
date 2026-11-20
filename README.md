@@ -111,11 +111,21 @@ cp yt_dlp_plugins/extractor/threads.py /your_venv_directory/.venv/lib/python3.12
 
 ## Video Downloader
 
+### GUI
+
 <img width="960" height="540" alt="ClipCraft_012" src="https://github.com/user-attachments/assets/b7aa195a-0180-4e68-b408-8effefb3797e" />
 
 For YouTube video **ClipCart** has special ability by downloading "The Most Played Segment", user just check the checkbox under the "Folder Keluaran" then the application automaticaly check if available or not.
 
 If user use this range segment then ClipCart will set to download only this segment.
+
+### CLI
+
+Video Downloader - CLI.py
+ 
+
+<img width="960" height="540" alt="Selection_1330" src="https://github.com/user-attachments/assets/72d079de-9bc3-44d4-83d8-ae887905be1a" />
+ 
 
 ## Video Compressor
 
@@ -125,11 +135,10 @@ If user use this range segment then ClipCart will set to download only this segm
 
 <img width="960" height="540" alt="ClipCraft_015" src="https://github.com/user-attachments/assets/9f5fc8bf-ebd2-4653-b7c7-b3ba5e1634c7" />
 
-Video Downloader - main.py
- 
+## Add Text / Subtitle
 
-<img width="960" height="540" alt="Selection_1330" src="https://github.com/user-attachments/assets/72d079de-9bc3-44d4-83d8-ae887905be1a" />
- 
+<img width="577" height="536" alt="Selection_1406" src="https://github.com/user-attachments/assets/b3ec289f-6dbe-4599-8795-a9ba452f28df" />
+
 
 **Just another vibe-coded project.** 😎
 
