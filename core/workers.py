@@ -4,10 +4,11 @@ import subprocess
 import uuid
 
 import yt_dlp
-from PySide6.QtCore import QThread, Signal
-from PySide6.QtGui import QImage
+from PySide6.QtCore import QThread, Signal, QRect
+from PySide6.QtGui import QImage, QPainter
+
 from core.downloader import COMPRESSION_PRESETS
-from core.ffmpeg import get_ffmpeg, probe_media
+from core.ffmpeg import get_ffmpeg, probe_media, probe_stream_info
 from core.ffmpeg import get_node
 
 # ============================================================
@@ -16,9 +17,8 @@ from core.ffmpeg import get_node
 _ILLEGAL_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _MULTI_SPACE = re.compile(r'\s+')
 
-# Batas aman: 255 byte umumnya cukup, tapi kita sisakan ruang
-# untuk suffix preset & ekstensi. 120 char untuk stem aman.
 _MAX_STEM_LEN = 120
+
 
 # ============================================================
 # Download + (opsional) kompres setelah unduh
@@ -201,7 +201,10 @@ class DownloadWorker(QThread):
         os.makedirs(self.output_dir, exist_ok=True)
         ydl_opts = {
             "format": "bv*+ba/b",
-            "outtmpl": os.path.join(self.output_dir, "%(title).200s [%(id)s].%(ext)s"),
+            "outtmpl": os.path.join(
+                self.output_dir,
+                "%(title).100B [%(id)s].%(ext)s"
+            ),
             "trim_file_name": 100,
             "remote_components": ["ejs:github"],
             "sleep_interval_requests": 1,
@@ -281,21 +284,14 @@ class DownloadWorker(QThread):
 
 
 # ============================================================
-# Kompres file lokal (halaman "Video Compression")
+# Kompres file lokal
 # ============================================================
 
 def _sanitize_stem(name: str, max_len: int = _MAX_STEM_LEN) -> str:
-    """
-    Buang karakter ilegal, rapikan spasi, dan potong panjangnya
-    (dihitung per-byte UTF-8 agar aman di filesystem apapun).
-    """
     name = _ILLEGAL_CHARS.sub("", name)
     name = _MULTI_SPACE.sub(" ", name).strip().strip(".")
-
-    # Potong per-byte UTF-8 agar tidak melebihi batas filesystem
     encoded = name.encode("utf-8")
     if len(encoded) > max_len:
-        # decode dengan errors='ignore' supaya tidak memotong multibyte
         name = encoded[:max_len].decode("utf-8", errors="ignore").rstrip()
     return name or "video"
 
@@ -303,7 +299,7 @@ def _sanitize_stem(name: str, max_len: int = _MAX_STEM_LEN) -> str:
 class CompressWorker(QThread):
     progress_changed = Signal(float, str, str, str)
     log_message = Signal(str)
-    finished_signal = Signal(bool, str)  # success, output_path/err
+    finished_signal = Signal(bool, str)
 
     def __init__(self, input_path: str, output_dir: str,
                  compression_preset: str = "Balanced", parent=None):
@@ -318,12 +314,7 @@ class CompressWorker(QThread):
         return probe_media(self.input_path)
 
     def _build_output_paths(self, output_ext: str):
-        """
-        Bangun output_path final + temp_path pendek.
-        Temp path memakai UUID agar dijamin pendek & unik.
-        """
         raw_stem = os.path.splitext(os.path.basename(self.input_path))[0]
-        # Sisa ruang untuk suffix " [Preset] (2)" + ekstensi + margin
         reserve = len(f" [{self.compression_preset}] (99)") + len(output_ext) + 8
         max_stem = max(20, _MAX_STEM_LEN - reserve)
         safe_stem = _sanitize_stem(raw_stem, max_stem)
@@ -332,7 +323,6 @@ class CompressWorker(QThread):
             self.output_dir,
             f"{safe_stem} [{self.compression_preset}]{output_ext}",
         )
-        # Hindari tabrakan
         if os.path.exists(output_path):
             counter = 2
             stem, ext = os.path.splitext(output_path)
@@ -340,7 +330,6 @@ class CompressWorker(QThread):
                 counter += 1
             output_path = f"{stem} ({counter}){ext}"
 
-        # Temp file pakai nama pendek (UUID) untuk hindari "File name too long"
         temp_path = os.path.join(
             self.output_dir, f"cc_tmp_{uuid.uuid4().hex}{output_ext}"
         )
@@ -415,7 +404,7 @@ class CompressWorker(QThread):
                     raise RuntimeError("FFmpeg tidak menghasilkan file output.")
 
                 os.replace(temp_path, output_path)
-                temp_path = None  # sudah dipindah, jangan dihapus di finally
+                temp_path = None
                 self.progress_changed.emit(100.0, "-", "-", "Kompresi selesai")
                 orig = os.path.getsize(self.input_path)
                 new = os.path.getsize(output_path)
@@ -431,7 +420,6 @@ class CompressWorker(QThread):
             self.log_message.emit(f"Error: {exc}")
             self.finished_signal.emit(False, str(exc))
         finally:
-            # Bersihkan temp file kalau masih ada (gagal / dibatalkan)
             if temp_path and os.path.exists(temp_path):
                 try:
                     os.remove(temp_path)
@@ -442,6 +430,7 @@ class CompressWorker(QThread):
         self._cancel_requested = True
         if self._ffmpeg_process and self._ffmpeg_process.poll() is None:
             self._ffmpeg_process.terminate()
+
 
 # ============================================================
 # Cutter: potong klip dari file lokal
@@ -470,10 +459,9 @@ class CutterWorker(QThread):
         self._ffmpeg_process = None
 
     def _build_output_paths(self, output_ext: str):
-        from core.workers import _sanitize_stem  # reuse helper di file ini
         raw_stem = os.path.splitext(os.path.basename(self.input_path))[0]
         reserve = len(" [cut 9999-9999] (99)") + len(output_ext) + 8
-        max_stem = max(20, _MAX_STEM_LEN - reserve) if "_MAX_STEM_LEN" in globals() else 90
+        max_stem = max(20, _MAX_STEM_LEN - reserve)
         safe_stem = _sanitize_stem(raw_stem, max_stem)
 
         s = int(self.start_sec)
@@ -512,7 +500,6 @@ class CutterWorker(QThread):
             output_path, temp_path = self._build_output_paths(output_ext)
 
             if self.reencode:
-                # akurat frame-by-frame
                 command = [
                     ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
                     "-i", self.input_path,
@@ -526,7 +513,6 @@ class CutterWorker(QThread):
                 ]
                 self.log_message.emit(f"Cut (re-encode) {self.start_sec:.2f}s → {end:.2f}s")
             else:
-                # fast copy (keyframe-accurate)
                 command = [
                     ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
                     "-ss", f"{self.start_sec:.3f}",
@@ -587,12 +573,300 @@ class CutterWorker(QThread):
         if self._ffmpeg_process and self._ffmpeg_process.poll() is None:
             self._ffmpeg_process.terminate()
 
+
+# ============================================================
+# Burn-in teks: cut + gambar teks ke setiap frame, pipe ke FFmpeg
+# ============================================================
+class TextBurnInWorker(QThread):
+    progress_changed = Signal(float, str, str, str)
+    log_message = Signal(str)
+    finished_signal = Signal(bool, str)
+
+    def __init__(
+        self,
+        input_path: str,
+        output_dir: str,
+        start_sec: float,
+        end_sec: float,
+        texts_as_dict: list[dict],
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.input_path = input_path
+        self.output_dir = output_dir
+        self.start_sec = max(0.0, float(start_sec))
+        self.end_sec = float(end_sec)
+        self.texts_as_dict = list(texts_as_dict or [])
+        self._cancel_requested = False
+        self._decode_proc = None
+        self._encode_proc = None
+
+    def _build_output_paths(self, output_ext: str):
+        raw_stem = os.path.splitext(os.path.basename(self.input_path))[0]
+        reserve = len(" [cut 9999-9999] (99)") + len(output_ext) + 8
+        max_stem = max(20, _MAX_STEM_LEN - reserve)
+        safe_stem = _sanitize_stem(raw_stem, max_stem)
+
+        s = int(self.start_sec)
+        e = int(self.end_sec)
+        tag = f" [cut {s}-{e}]"
+        output_path = os.path.join(self.output_dir, f"{safe_stem}{tag}{output_ext}")
+        if os.path.exists(output_path):
+            counter = 2
+            stem, ext = os.path.splitext(output_path)
+            while os.path.exists(f"{stem} ({counter}){ext}"):
+                counter += 1
+            output_path = f"{stem} ({counter}){ext}"
+
+        temp_path = os.path.join(self.output_dir, f"cc_tmp_{uuid.uuid4().hex}{output_ext}")
+        return output_path, temp_path
+
+    def run(self):
+        os.makedirs(self.output_dir, exist_ok=True)
+        temp_path = None
+        try:
+            from ui.widgets.text_item import TextItem
+            from ui.widgets.text_renderer import draw_texts
+            from PySide6.QtGui import QImage, QPainter
+            from PySide6.QtCore import QRect
+
+            if self.end_sec <= self.start_sec:
+                raise RuntimeError("Waktu akhir harus lebih besar dari waktu mulai.")
+
+            info = probe_stream_info(self.input_path)
+            if not info.get("has_video"):
+                raise RuntimeError("File tidak memiliki stream video.")
+            width = int(info.get("width") or 0)
+            height = int(info.get("height") or 0)
+            fps = float(info.get("fps") or 30.0)
+            duration = float(info.get("duration") or 0.0)
+            if width <= 0 or height <= 0:
+                raise RuntimeError("Tidak bisa membaca resolusi video sumber.")
+            if fps <= 0:
+                fps = 30.0
+            if self.start_sec >= duration:
+                raise RuntimeError(
+                    f"Waktu mulai ({self.start_sec:.1f}s) melebihi durasi file ({duration:.1f}s)."
+                )
+
+            end = min(self.end_sec, duration)
+            clip_len = max(0.1, end - self.start_sec)
+
+            texts = [TextItem.from_dict(d) for d in self.texts_as_dict]
+            for t in texts:
+                t.start_sec = max(0.0, t.start_sec - self.start_sec)
+                t.end_sec = max(0.0, t.end_sec - self.start_sec)
+
+            ffmpeg = get_ffmpeg()
+            output_path, temp_path = self._build_output_paths(".mp4")
+
+            frame_bytes = width * height * 3
+            frame_size_arg = f"{width}x{height}"
+
+            decode_cmd = [
+                ffmpeg, "-hide_banner", "-loglevel", "error",
+                "-ss", f"{self.start_sec:.3f}",
+                "-t", f"{clip_len:.3f}",
+                "-i", self.input_path,
+                "-an",
+                "-vf", "format=rgb24",
+                "-f", "rawvideo", "-pix_fmt", "rgb24",
+                "-s", frame_size_arg, "-r", f"{fps:.6f}",
+                "-",
+            ]
+            encode_cmd = [
+                ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "rawvideo", "-pix_fmt", "rgb24",
+                "-s", frame_size_arg, "-r", f"{fps:.6f}",
+                "-i", "-",
+                "-ss", f"{self.start_sec:.3f}",
+                "-t", f"{clip_len:.3f}",
+                "-i", self.input_path,
+                "-map", "0:v:0", "-map", "1:a?",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+                "-pix_fmt", "yuv420p",
+                "-colorspace", "bt709",
+                "-color_primaries", "bt709",
+                "-color_trc", "bt709",
+                "-color_range", "tv",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
+                "-progress", "pipe:1", "-nostats",
+                temp_path,
+            ]
+
+            self.log_message.emit(
+                f"Burn-in teks {len(texts)} item; "
+                f"{frame_size_arg} @ {fps:.3f} fps; "
+                f"{self.start_sec:.2f}s → {end:.2f}s"
+            )
+            self.progress_changed.emit(0.0, "-", "-", "Memproses frame + teks...")
+
+            self._decode_proc = subprocess.Popen(
+                decode_cmd,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            self._encode_proc = subprocess.Popen(
+                encode_cmd,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, bufsize=0,
+            )
+
+            frame_index = 0
+            total_frames = max(1, int(round(clip_len * fps)))
+
+            def _drain_progress():
+                if not self._encode_proc or not self._encode_proc.stdout:
+                    return
+                import select
+                fd = self._encode_proc.stdout.fileno()
+                ready, _, _ = select.select([fd], [], [], 0)
+                if not ready:
+                    return
+                line = self._encode_proc.stdout.readline()
+                if not line:
+                    return
+                line = line.decode(errors="ignore").strip()
+                if line.startswith("out_time_ms=") and clip_len > 0:
+                    try:
+                        elapsed = int(line.split("=", 1)[1]) / 1_000_000
+                        pct = min(99.0, max(0.0, elapsed / clip_len * 100))
+                        self.progress_changed.emit(
+                            pct, "-", "-", "Memproses frame + teks..."
+                        )
+                    except ValueError:
+                        pass
+
+            while True:
+                if self._cancel_requested:
+                    raise RuntimeError("Pemrosesan dibatalkan.")
+
+                raw = self._decode_proc.stdout.read(frame_bytes)
+                if not raw or len(raw) < frame_bytes:
+                    break
+
+                t = frame_index / fps
+
+                # frame sumber: RGB888, stride width*3 (tight dari rawvideo)
+                src_image = QImage(
+                    raw, width, height, width * 3,
+                    QImage.Format.Format_RGB888,
+                )
+
+                # kanvas output dijamin RGB888 tanpa padding
+                out_image = QImage(width, height, QImage.Format.Format_RGB888)
+                out_image.fill(0)
+
+                p = QPainter(out_image)
+                p.drawImage(0, 0, src_image)
+                draw_texts(p, QRect(0, 0, width, height), texts, t)
+                p.end()
+
+                data = out_image.constBits().tobytes()
+                expected = width * height * 3
+                if len(data) != expected:
+                    bpl = out_image.bytesPerLine()
+                    mv = memoryview(data)
+                    rows = []
+                    for y in range(height):
+                        off = y * bpl
+                        rows.append(mv[off:off + width * 3])
+                    data = b"".join(rows)
+
+                if frame_index == 0:
+                    self.log_message.emit(
+                        f"[burnin] fmt={out_image.format()} "
+                        f"bpl={out_image.bytesPerLine()} "
+                        f"expected_bpl={width * 3} "
+                        f"datalen={len(data)} expected_len={expected}"
+                    )
+
+                self._encode_proc.stdin.write(data)
+                self._encode_proc.stdin.flush()
+
+                frame_index += 1
+                if frame_index % 5 == 0 or frame_index == total_frames:
+                    _drain_progress()
+                    if total_frames > 0:
+                        pct = min(99.0, frame_index / total_frames * 100)
+                        self.progress_changed.emit(
+                            pct, "-", "-", "Memproses frame + teks..."
+                        )
+
+            try:
+                self._encode_proc.stdin.close()
+            except Exception:
+                pass
+
+            try:
+                self._decode_proc.wait(timeout=30)
+            except Exception:
+                pass
+
+            if self._encode_proc.stdout:
+                for line in self._encode_proc.stdout:
+                    line = line.decode(errors="ignore").strip()
+                    if line.startswith("out_time_ms=") and clip_len > 0:
+                        try:
+                            elapsed = int(line.split("=", 1)[1]) / 1_000_000
+                            pct = min(99.0, max(0.0, elapsed / clip_len * 100))
+                            self.progress_changed.emit(
+                                pct, "-", "-", "Memproses frame + teks..."
+                            )
+                        except ValueError:
+                            pass
+
+            rc = self._encode_proc.wait()
+            stderr = (
+                self._encode_proc.stderr.read()
+                if self._encode_proc.stderr else b""
+            )
+            if rc != 0:
+                raise RuntimeError(
+                    f"FFmpeg encode gagal: {stderr.decode(errors='ignore')[-1200:]}"
+                )
+            if not os.path.isfile(temp_path) or os.path.getsize(temp_path) == 0:
+                raise RuntimeError("FFmpeg tidak menghasilkan file output.")
+
+            os.replace(temp_path, output_path)
+            temp_path = None
+            self.progress_changed.emit(100.0, "-", "-", "Burn-in selesai")
+            self.log_message.emit(f"Hasil: {output_path}")
+            self.finished_signal.emit(True, output_path)
+        except Exception as exc:
+            self.log_message.emit(f"Error: {exc}")
+            self.finished_signal.emit(False, str(exc))
+        finally:
+            for proc in (self._decode_proc, self._encode_proc):
+                if proc and proc.poll() is None:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
+            self._decode_proc = None
+            self._encode_proc = None
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+
+    def cancel(self):
+        self._cancel_requested = True
+        for proc in (self._decode_proc, self._encode_proc):
+            if proc and proc.poll() is None:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
+
 # ============================================================
 # Thumbnail strip untuk cutter
 # ============================================================
 class ThumbnailWorker(QThread):
-    thumbnail_ready = Signal(int, QImage)   # index, gambar
-    finished_signal = Signal(bool, str)     # success, pesan
+    thumbnail_ready = Signal(int, QImage)
+    finished_signal = Signal(bool, str)
 
     def __init__(
         self,

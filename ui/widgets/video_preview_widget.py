@@ -1,11 +1,17 @@
-from PySide6.QtCore import Qt, Signal, QUrl, QPointF
-from PySide6.QtGui import QImage, QPixmap, QPolygonF, QPainter, QColor, QPen
+from PySide6.QtCore import Qt, Signal, QUrl, QPointF, QRect, QRectF
+from PySide6.QtGui import (
+    QImage, QPixmap, QPolygonF, QPainter, QColor, QPen, QFont,
+)
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QGraphicsVideoItem
 from PySide6.QtWidgets import (
     QWidget, QStackedLayout, QLabel, QPushButton,
-    QSizePolicy, QGraphicsView, QGraphicsScene,
+    QSizePolicy, QGraphicsView, QGraphicsScene, QGraphicsItem,
 )
+
+from .text_item import TextItem
+from .text_renderer import draw_texts
+
 
 class PlayButton(QPushButton):
     def __init__(self, parent=None):
@@ -25,7 +31,6 @@ class PlayButton(QPushButton):
         w, h = self.width(), self.height()
         cx, cy = w / 2.0, h / 2.0
 
-        # lingkaran background
         if self.underMouse():
             bg = QColor(56, 189, 248, 200)
         else:
@@ -34,12 +39,10 @@ class PlayButton(QPushButton):
         painter.setPen(QPen(QColor(255, 255, 255, 200), 2))
         painter.drawEllipse(1, 1, w - 2, h - 2)
 
-        # ikon
         painter.setBrush(QColor("white"))
         painter.setPen(Qt.NoPen)
 
         if self._playing:
-            # dua batang vertikal (pause)
             bar_w = w * 0.12
             bar_h = h * 0.40
             gap = w * 0.10
@@ -52,12 +55,9 @@ class PlayButton(QPushButton):
                 int(bar_w), int(bar_h),
             )
         else:
-            # segitiga play — titik berat di tengah geometris
             tri_w = w * 0.30
             tri_h = h * 0.36
-            # segitiga dengan centroid di (cx, cy):
-            # verteks: atas-kiri, bawah-kiri, kanan-tengah
-            x0 = cx - tri_w / 2 + tri_w * 0.10   # sedikit offset visual
+            x0 = cx - tri_w / 2 + tri_w * 0.10
             y0 = cy - tri_h / 2
             y1 = cy + tri_h / 2
             x1 = x0 + tri_w
@@ -67,6 +67,35 @@ class PlayButton(QPushButton):
                 QPointF(x1, cy),
             ])
             painter.drawPolygon(poly)
+
+
+class TextOverlayItem(QGraphicsItem):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._texts: list[TextItem] = []
+        self._playhead_sec: float = 0.0
+        self._rect = QRect(0, 0, 1, 1)
+        self.setZValue(10)
+
+    def set_texts(self, items: list[TextItem]):
+        self._texts = list(items)
+        self.update()
+
+    def set_playhead(self, sec: float):
+        self._playhead_sec = float(sec)
+        self.update()
+
+    def set_area(self, w: int, h: int):
+        self.prepareGeometryChange()
+        self._rect = QRect(0, 0, max(1, w), max(1, h))
+        self.update()
+
+    def boundingRect(self):
+        return QRectF(self._rect)
+
+    def paint(self, painter, option, widget=None):
+        draw_texts(painter, self._rect, self._texts, self._playhead_sec)
+
 
 class VideoPreviewWidget(QWidget):
     play_clicked = Signal()
@@ -83,11 +112,13 @@ class VideoPreviewWidget(QWidget):
         self._is_playing = False
         self._pending_seek_sec: float | None = None
 
+        self._texts: list[TextItem] = []
+        self._playhead_sec: float = 0.0
+
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(0, 0)
         self.setStyleSheet("background-color: #000;")
 
-        # --- media ---
         self._player = QMediaPlayer(self)
         self._audio = QAudioOutput(self)
         self._player.setAudioOutput(self._audio)
@@ -105,13 +136,11 @@ class VideoPreviewWidget(QWidget):
 
         self._build_ui()
 
-    # ---------- UI ----------
     def _build_ui(self):
         self._stack = QStackedLayout(self)
         self._stack.setContentsMargins(0, 0, 0, 0)
         self._stack.setStackingMode(QStackedLayout.StackAll)
 
-        # halaman 0: image placeholder (scrub)
         self._image_label = QLabel(self)
         self._image_label.setAlignment(Qt.AlignCenter)
         self._image_label.setStyleSheet("background-color: #000; color: #64748b;")
@@ -121,7 +150,6 @@ class VideoPreviewWidget(QWidget):
         self._image_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self._stack.addWidget(self._image_label)
 
-        # halaman 1: video via QGraphicsVideoItem
         self._video_scene = QGraphicsScene(self)
         self._video_view = QGraphicsView(self._video_scene, self)
         self._video_view.setStyleSheet("background-color: #000; border: none;")
@@ -135,37 +163,19 @@ class VideoPreviewWidget(QWidget):
         self._video_scene.addItem(self._video_item)
         self._player.setVideoOutput(self._video_item)
 
+        self._text_overlay = TextOverlayItem()
+        self._video_scene.addItem(self._text_overlay)
+
         self._stack.addWidget(self._video_view)
 
         self._current_pix: QPixmap | None = None
         self._stack.setCurrentIndex(0)
 
-        # tombol play overlay
         self._play_btn = PlayButton(self)
         self._play_btn.clicked.connect(self.play_clicked.emit)
         self._play_btn.raise_()
         self._play_btn.show()
-        # self._play_btn = QPushButton(self)
-        # self._play_btn.setCursor(Qt.PointingHandCursor)
-        # self._play_btn.setFixedSize(56, 56)
-        # self._play_btn.setStyleSheet("""
-        #     QPushButton {
-        #         background-color: rgba(15, 23, 42, 180);
-        #         border: 2px solid rgba(255,255,255,200);
-        #         border-radius: 28px;
-        #         color: white;
-        #         font-size: 22px;
-        #     }
-        #     QPushButton:hover {
-        #         background-color: rgba(56, 189, 248, 200);
-        #     }
-        # """)
-        # self._play_btn.setText("▶")
-        # self._play_btn.clicked.connect(self.play_clicked.emit)
-        # self._play_btn.raise_()
-        # self._play_btn.show()
 
-        # label waktu
         self._time_label = QLabel(self)
         self._time_label.setStyleSheet("""
             color: #e2e8f0;
@@ -185,13 +195,27 @@ class VideoPreviewWidget(QWidget):
         self._center_play_button()
         self._center_time_label()
 
+    # ---------- text overlay API ----------
+    def set_texts(self, items: list[TextItem]):
+        self._texts = list(items)
+        self._text_overlay.set_texts(self._texts)
+        self._refresh_overlay()
+
+    def set_playhead(self, sec: float):
+        self._playhead_sec = float(sec)
+        self._text_overlay.set_playhead(self._playhead_sec)
+        self._refresh_overlay()
+
+    def texts(self) -> list[TextItem]:
+        return list(self._texts)
+
     # ---------- lifecycle ----------
     def load(self, path: str):
         self._reset_state()
         self._player.setSource(QUrl.fromLocalFile(path))
         self._stack.setCurrentIndex(1)
         self._play_btn.raise_()
-        self._time_label.raise_()        # ← tambah
+        self._time_label.raise_()
 
     def clear(self):
         self._player.stop()
@@ -207,11 +231,13 @@ class VideoPreviewWidget(QWidget):
         self._position = 0.0
         self._is_playing = False
         self._pending_seek_sec = None
+        self._playhead_sec = 0.0
         self._update_play_button(False)
+        if hasattr(self, "_text_overlay"):
+            self._text_overlay.set_playhead(0.0)
 
     # ---------- playback ----------
     def play_from(self, start_sec: float):
-        """Play dari start_sec. Auto-stop ditangani oleh CutterPage."""
         if self._player.source().isEmpty():
             return
         start_sec = max(0.0, min(float(start_sec), self._duration or 0.0))
@@ -254,8 +280,6 @@ class VideoPreviewWidget(QWidget):
         self._player.setPosition(int(sec * 1000))
 
     def seek_while_playing(self, sec: float):
-        """Seek tanpa menghentikan playback. Kalau sedang playing, lanjut play
-        dari posisi baru. Kalau pause, hanya seek."""
         if self._player.source().isEmpty():
             return
         sec = max(0.0, min(float(sec), self._duration or 0.0))
@@ -288,11 +312,14 @@ class VideoPreviewWidget(QWidget):
     def set_time_info(self, current: float, total: float):
         self._position = float(current)
         self._duration = float(total)
+        self._playhead_sec = self._position
         self._time_label.setText(
             f"{self._fmt_time(self._position)} / {self._fmt_time(self._duration)}"
         )
         self._time_label.adjustSize()
         self._center_time_label()
+        self._text_overlay.set_playhead(self._playhead_sec)
+        self._refresh_overlay()
 
     # ---------- info ----------
     def duration(self) -> float:
@@ -308,11 +335,14 @@ class VideoPreviewWidget(QWidget):
     def _on_position_changed(self, ms: int):
         sec = ms / 1000.0
         self._position = sec
+        self._playhead_sec = sec
         self._time_label.setText(
             f"{self._fmt_time(sec)} / {self._fmt_time(self._duration)}"
         )
         self._time_label.adjustSize()
         self._center_time_label()
+        self._text_overlay.set_playhead(self._playhead_sec)
+        self._refresh_overlay()
         self.position_changed.emit(sec)
 
     def _on_duration_changed(self, ms: int):
@@ -333,11 +363,6 @@ class VideoPreviewWidget(QWidget):
         self._play_btn.setVisible(not playing)
         self._play_btn.raise_()
         self._center_play_button()
-    # def _update_play_button(self, playing: bool):
-    #     self._play_btn.setVisible(True)
-    #     self._play_btn.setText("❚❚" if playing else "▶")
-    #     self._play_btn.raise_()
-    #     self._center_play_button()
 
     def _render_current_pix(self):
         if self._current_pix is None or self._current_pix.isNull():
@@ -348,7 +373,25 @@ class VideoPreviewWidget(QWidget):
         scaled = self._current_pix.scaled(
             area, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
+        if self._texts:
+            scaled = self._compose_texts(scaled)
         self._image_label.setPixmap(scaled)
+
+    def _compose_texts(self, pix: QPixmap) -> QPixmap:
+        out = QPixmap(pix)
+        painter = QPainter(out)
+        draw_texts(
+            painter,
+            QRect(0, 0, out.width(), out.height()),
+            self._texts,
+            self._playhead_sec,
+        )
+        painter.end()
+        return out
+
+    def _refresh_overlay(self):
+        if self._stack.currentIndex() == 0:
+            self._render_current_pix()
 
     def _fit_video(self):
         if not hasattr(self, "_video_item") or not hasattr(self, "_video_view"):
@@ -358,6 +401,8 @@ class VideoPreviewWidget(QWidget):
             return
         self._video_item.setSize(size)
         self._video_scene.setSceneRect(0, 0, size.width(), size.height())
+        if hasattr(self, "_text_overlay"):
+            self._text_overlay.set_area(size.width(), size.height())
 
     def _center_play_button(self):
         w = self._play_btn.width()

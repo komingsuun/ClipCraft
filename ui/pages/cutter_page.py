@@ -5,15 +5,17 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QProgressBar, QPushButton,
-    QVBoxLayout, QWidget, QSizePolicy,
+    QVBoxLayout, QWidget, QSizePolicy, QDialog,
 )
 
 from core.ffmpeg import probe_media
 from core.video_cutter import ensure_cut_dir
-from core.workers import CutterWorker, ThumbnailWorker
+from core.workers import CutterWorker, TextBurnInWorker, ThumbnailWorker
 from ui.widgets.log_widget import LogWidget
 from ui.widgets.timeline_widget import TimelineWidget
 from ui.widgets.video_preview_widget import VideoPreviewWidget
+from ui.widgets.text_item import TextItem
+from ui.widgets.text_edit_dialog import TextEditDialog
 
 
 def _parse_time(text: str) -> float:
@@ -43,7 +45,7 @@ def _fmt_time(seconds: float) -> str:
 class CutterPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.worker: CutterWorker | None = None
+        self.worker = None
         self.thumb_worker: ThumbnailWorker | None = None
         self._duration = 0.0
         self._video_path = ""
@@ -68,6 +70,50 @@ class CutterPage(QWidget):
         self._build_ui()
         self._wire_preview()
 
+        self.timeline.setMinimumHeight(160)
+        self.timeline.text_double_click.connect(self._on_text_double_click)
+
+    def _on_text_double_click(self, text_id: int):
+        item = next((t for t in self.timeline.texts() if t.id == text_id), None)
+        if item is None:
+            return
+        dlg = TextEditDialog(item, self)
+        if dlg.exec() == QDialog.Accepted:
+            r = dlg.result_item()
+            self.timeline.update_text(
+                text_id,
+                text=r.text,
+                font_size=r.font_size,
+                color=r.color,
+                x_ratio=r.x_ratio,
+                y_ratio=r.y_ratio,
+                bg_enabled=r.bg_enabled,
+                bg_color=r.bg_color,
+                bg_opacity=r.bg_opacity,
+            )
+
+        self.preview_widget.set_texts(self.timeline.texts())
+
+    def _add_text_at_playhead(self):
+        if self.timeline.duration <= 0:
+            return
+        start = self.timeline.playhead_seconds()
+        dur = self.timeline.DEFAULT_TEXT_DURATION
+        end = min(start + dur, self.timeline.duration)
+        if end - start < self.timeline.MIN_TEXT_DURATION:
+            start = max(0.0, end - self.timeline.MIN_TEXT_DURATION)
+        item = TextItem(
+            text="Teks baru",
+            start_sec=start,
+            end_sec=end,
+            x_ratio=0.5,
+            y_ratio=0.5,
+            font_size=48,
+            color="#FFFFFF",
+        )
+        self.timeline.add_text(item)
+        self.preview_widget.set_texts(self.timeline.texts())
+
     # ---------- wiring ----------
     def _wire_preview(self):
         pw = self.preview_widget
@@ -77,6 +123,14 @@ class CutterPage(QWidget):
 
         self.timeline.seek_requested.connect(pw.seek)
         self.timeline.range_dragging.connect(self._on_range_dragging)
+
+        self.timeline.text_changed.connect(
+            lambda *_: self.preview_widget.set_texts(self.timeline.texts())
+        )
+        self.timeline.text_selected.connect(
+            lambda *_: self.preview_widget.set_texts(self.timeline.texts())
+        )
+        self.preview_widget.set_playhead(self.timeline.playhead_seconds())
 
     def _on_player_position(self, sec: float):
         self.timeline.set_playhead(sec)
@@ -193,7 +247,6 @@ class CutterPage(QWidget):
         self.thumb_status.setObjectName("detailLabel")
         root.addWidget(self.thumb_status, stretch=0)
 
-        # Baris waktu
         time_row = QHBoxLayout()
 
         self.start_input = QLineEdit()
@@ -219,6 +272,12 @@ class CutterPage(QWidget):
         browse_btn.setObjectName("gnrlBtn")
         browse_btn.clicked.connect(self.browse_file)
         time_row.addWidget(browse_btn, stretch=0)
+
+        self.btn_add_text = QPushButton("+ Teks")
+        self.btn_add_text.setObjectName("gnrlBtn")
+        self.btn_add_text.setCursor(Qt.PointingHandCursor)
+        self.btn_add_text.clicked.connect(self._add_text_at_playhead)
+        time_row.addWidget(self.btn_add_text, stretch=1)
 
         self.start_btn = QPushButton("Mulai Potong")
         self.start_btn.setObjectName("primaryBtn")
@@ -444,23 +503,38 @@ class CutterPage(QWidget):
         out_dir = ensure_cut_dir()
         self.log(f"Output: {out_dir}")
 
+        texts = self.timeline.texts()
+        has_texts = bool(texts)
+
         self.progress_bar.setValue(0)
         self._set_process_text("Memulai pemotongan...")
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.log("-" * 40)
         self.log(f"Range : {_fmt_time(start)} → {_fmt_time(end)}")
-        self.log(
-            f"Mode  : {'re-encode' if self.reencode_cb.isChecked() else 'copy'}"
-        )
 
-        self.worker = CutterWorker(
-            input_path=src,
-            output_dir=out_dir,
-            start_sec=start,
-            end_sec=end,
-            reencode=self.reencode_cb.isChecked(),
-        )
+        if has_texts:
+            self.log(
+                f"Mode  : burn-in teks ({len(texts)} item) — re-encode dipaksa"
+            )
+            self.worker = TextBurnInWorker(
+                input_path=src,
+                output_dir=out_dir,
+                start_sec=start,
+                end_sec=end,
+                texts_as_dict=[t.to_dict() for t in texts],
+            )
+        else:
+            self.log(
+                f"Mode  : {'re-encode' if self.reencode_cb.isChecked() else 'copy'}"
+            )
+            self.worker = CutterWorker(
+                input_path=src,
+                output_dir=out_dir,
+                start_sec=start,
+                end_sec=end,
+                reencode=self.reencode_cb.isChecked(),
+            )
         self.worker.progress_changed.connect(self.on_progress)
         self.worker.log_message.connect(self.log)
         self.worker.finished_signal.connect(self.on_finished)
