@@ -10,11 +10,12 @@ class TimelineWidget(QWidget):
     seek_requested = Signal(float)
     range_changed = Signal(float, float)
     position_changed = Signal(float)
-    range_dragging = Signal(str, float, float)  # handle, start_sec, end_sec
+    range_dragging = Signal(str, float, float)
 
     text_selected = Signal(object)            # int | None
     text_changed = Signal(int, float, float)  # id, start_sec, end_sec
     text_double_click = Signal(int)           # id
+    texts_changed = Signal()                  # daftar teks berubah
 
     HANDLE_HIT = 10
     PLAYHEAD_HIT = 6
@@ -31,6 +32,9 @@ class TimelineWidget(QWidget):
     SNAP_PX = 6
     DEFAULT_TEXT_DURATION = 3.0
 
+    TEXT_CLOSE_SIZE = 14
+    TEXT_CLOSE_MARGIN = 2
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.duration = 0.0
@@ -41,7 +45,6 @@ class TimelineWidget(QWidget):
         self._dragging: str | None = None
         self._hover: str | None = None
 
-        # text track state
         self._texts: list[TextItem] = []
         self._selected_text: int | None = None
         self._next_text_id: int = 1
@@ -66,7 +69,6 @@ class TimelineWidget(QWidget):
         if self.end_sec <= self.start_sec or self.end_sec > self.duration:
             self.end_sec = self.duration
         self.playhead_sec = min(self.playhead_sec, self.duration)
-        # clamp semua teks agar tetap valid
         for it in self._texts:
             it.clamp(self.duration, self.MIN_TEXT_DURATION)
         self._texts.sort(key=lambda t: t.start_sec)
@@ -152,6 +154,7 @@ class TimelineWidget(QWidget):
         ):
             self._selected_text = None
             self.text_selected.emit(None)
+        self.texts_changed.emit()
         self.update()
 
     def texts(self) -> list[TextItem]:
@@ -167,6 +170,7 @@ class TimelineWidget(QWidget):
         self._selected_text = item.id
         self.text_selected.emit(item.id)
         self.text_changed.emit(item.id, item.start_sec, item.end_sec)
+        self.texts_changed.emit()
         self.update()
         return item.id
 
@@ -179,6 +183,7 @@ class TimelineWidget(QWidget):
                 it.clamp(self.duration, self.MIN_TEXT_DURATION)
                 self._texts.sort(key=lambda t: t.start_sec)
                 self.text_changed.emit(it.id, it.start_sec, it.end_sec)
+                self.texts_changed.emit()
                 self.update()
                 return True
         return False
@@ -190,6 +195,7 @@ class TimelineWidget(QWidget):
                 if self._selected_text == text_id:
                     self._selected_text = None
                     self.text_selected.emit(None)
+                self.texts_changed.emit()
                 self.update()
                 return True
         return False
@@ -273,6 +279,14 @@ class TimelineWidget(QWidget):
             x1 = x0 + 2
         return QRect(x0, track.top() + 3, max(2, x1 - x0), track.height() - 6)
 
+    def _text_close_rect(self, item: TextItem) -> QRect:
+        r = self._text_rect(item)
+        size = self.TEXT_CLOSE_SIZE
+        margin = self.TEXT_CLOSE_MARGIN
+        x = r.right() - size + margin
+        y = r.top() - size + margin
+        return QRect(x, y, size, size)
+
     def _hit_handle(self, pos) -> str | None:
         if self.duration <= 0:
             return None
@@ -293,8 +307,6 @@ class TimelineWidget(QWidget):
         if self.duration <= 0:
             return None
         track = self._text_track_rect()
-        if not track.contains(pos):
-            return None
         for it in reversed(self._texts):
             rect = self._text_rect(it)
             if not rect.contains(pos):
@@ -304,6 +316,16 @@ class TimelineWidget(QWidget):
             if abs(pos.x() - rect.right()) <= self.TEXT_HANDLE_HIT:
                 return it.id, "end"
             return it.id, "body"
+        return None
+
+    def _hit_text_close(self, pos) -> int | None:
+        if self._selected_text is None:
+            return None
+        item = self._find_text(self._selected_text)
+        if item is None:
+            return None
+        if self._text_close_rect(item).contains(pos):
+            return item.id
         return None
 
     # ---------- snapping ----------
@@ -341,10 +363,16 @@ class TimelineWidget(QWidget):
             return
         pos = event.position().toPoint()
 
-        # text track dulu
+        close_id = self._hit_text_close(pos)
+        if close_id is not None:
+            self.remove_text(close_id)
+            event.accept()
+            return
+
         hit_text = self._hit_text(pos)
         if hit_text:
             tid, part = hit_text
+            self.setFocus()
             self.select_text(tid)
             self._drag_text_id = tid
             if part == "body":
@@ -363,7 +391,6 @@ class TimelineWidget(QWidget):
             event.accept()
             return
 
-        # klik kosong di text track → deselect
         if self._text_track_rect().contains(pos):
             self.select_text(None)
             event.accept()
@@ -406,7 +433,10 @@ class TimelineWidget(QWidget):
             event.accept()
             return
 
-        # hover di text track
+        if self._hit_text_close(pos) is not None:
+            self.setCursor(Qt.PointingHandCursor)
+            return
+
         hit_text = self._hit_text(pos)
         if hit_text:
             _, part = hit_text
@@ -456,6 +486,11 @@ class TimelineWidget(QWidget):
         super().mouseDoubleClickEvent(event)
 
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Delete and self._selected_text is not None:
+            self.remove_text(self._selected_text)
+            event.accept()
+            return
+
         step = 1.0 if event.modifiers() & Qt.ShiftModifier else 0.1
         if event.key() == Qt.Key_Left:
             self.set_range(self.start_sec - step, self.end_sec)
@@ -552,7 +587,6 @@ class TimelineWidget(QWidget):
         strip = self._strip_rect()
         ruler = self._ruler_rect()
 
-        # thumbnail strip
         if self._thumbs and self.duration > 0:
             n = len(self._thumbs)
             cell_w = strip.width() / n
@@ -585,7 +619,6 @@ class TimelineWidget(QWidget):
             painter.end()
             return
 
-        # overlay gelap di luar seleksi
         xs = self._sec_to_x(self.start_sec)
         xe = self._sec_to_x(self.end_sec)
         painter.fillRect(
@@ -596,7 +629,6 @@ class TimelineWidget(QWidget):
             QColor(0, 0, 0, 140),
         )
 
-        # garis seleksi
         sel_color = (
             QColor("#7dd3fc")
             if self._dragging in ("start", "end")
@@ -606,7 +638,6 @@ class TimelineWidget(QWidget):
         painter.drawLine(xs, strip.top(), xs, strip.bottom())
         painter.drawLine(xe, strip.top(), xe, strip.bottom())
 
-        # handle
         handle_w = 6
         h_color = (
             QColor("#38bdf8")
@@ -626,7 +657,6 @@ class TimelineWidget(QWidget):
             QRect(xe - handle_w // 2, strip.bottom() - 10, handle_w, 10), h_color
         )
 
-        # playhead
         xp = self._sec_to_x(self.playhead_sec)
         pw = 2 if self._dragging == "playhead" else 1
         painter.setPen(QPen(QColor("#f8fafc"), pw))
@@ -645,7 +675,6 @@ class TimelineWidget(QWidget):
             text_rect.right(), text_rect.top(),
         )
 
-        # snap guide
         if self._snap_guide_sec is not None:
             xs_g = self._sec_to_x(self._snap_guide_sec)
             painter.setPen(QPen(QColor("#fbbf24"), 1, Qt.DashLine))
@@ -683,6 +712,21 @@ class TimelineWidget(QWidget):
                 painter.drawRect(QRect(r.left() - 2, r.top(), 4, r.height()))
                 painter.drawRect(QRect(r.right() - 1, r.top(), 4, r.height()))
 
+                cr = self._text_close_rect(it)
+                painter.setBrush(QColor("#ef4444"))
+                painter.setPen(QPen(QColor("#0f172a"), 1))
+                painter.drawEllipse(cr)
+                painter.setPen(QPen(QColor("#ffffff"), 2))
+                m = 4
+                painter.drawLine(
+                    cr.left() + m, cr.top() + m,
+                    cr.right() - m, cr.bottom() - m,
+                )
+                painter.drawLine(
+                    cr.right() - m, cr.top() + m,
+                    cr.left() + m, cr.bottom() - m,
+                )
+
         painter.setBrush(Qt.NoBrush)
 
         # ruler
@@ -690,7 +734,6 @@ class TimelineWidget(QWidget):
         painter.setPen(QColor("#334155"))
         painter.drawLine(0, ruler.top(), ruler.width(), ruler.top())
 
-        # tick adaptif
         painter.setFont(QFont("Consolas", 8))
         fm = painter.fontMetrics()
         approx_label_w = fm.horizontalAdvance("00:00.00")
@@ -711,7 +754,6 @@ class TimelineWidget(QWidget):
             else:
                 painter.drawText(x + 3, ruler.top() + 18, label)
 
-        # label start & end
         painter.setPen(QColor("#38bdf8"))
         painter.setFont(QFont("Consolas", 9, QFont.Bold))
         painter.drawText(xs + 4, ruler.bottom() - 2, self._fmt_time(self.start_sec))
@@ -723,7 +765,6 @@ class TimelineWidget(QWidget):
             end_label,
         )
 
-        # durasi klip
         painter.setPen(QColor("#e2e8f0"))
         painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
         clip_len = self.end_sec - self.start_sec

@@ -79,6 +79,9 @@ class CutterPage(QWidget):
             return
         dlg = TextEditDialog(item, self)
         if dlg.exec() == QDialog.Accepted:
+            if dlg.was_deleted():
+                self.timeline.remove_text(text_id)
+                return
             r = dlg.result_item()
             self.timeline.update_text(
                 text_id,
@@ -91,8 +94,6 @@ class CutterPage(QWidget):
                 bg_color=r.bg_color,
                 bg_opacity=r.bg_opacity,
             )
-
-        self.preview_widget.set_texts(self.timeline.texts())
 
     def _add_text_at_playhead(self):
         if self.timeline.duration <= 0:
@@ -107,12 +108,11 @@ class CutterPage(QWidget):
             start_sec=start,
             end_sec=end,
             x_ratio=0.5,
-            y_ratio=0.5,
+            y_ratio=0.8,
             font_size=48,
-            color="#FFFFFF",
+            color="#000000",
         )
         self.timeline.add_text(item)
-        self.preview_widget.set_texts(self.timeline.texts())
 
     # ---------- wiring ----------
     def _wire_preview(self):
@@ -124,11 +124,8 @@ class CutterPage(QWidget):
         self.timeline.seek_requested.connect(pw.seek)
         self.timeline.range_dragging.connect(self._on_range_dragging)
 
-        self.timeline.text_changed.connect(
-            lambda *_: self.preview_widget.set_texts(self.timeline.texts())
-        )
-        self.timeline.text_selected.connect(
-            lambda *_: self.preview_widget.set_texts(self.timeline.texts())
+        self.timeline.texts_changed.connect(
+            lambda: self.preview_widget.set_texts(self.timeline.texts())
         )
         self.preview_widget.set_playhead(self.timeline.playhead_seconds())
 

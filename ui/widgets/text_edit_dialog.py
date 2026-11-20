@@ -24,11 +24,12 @@ class TextEditDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Edit Teks")
         self.setModal(True)
-        self.resize(380, 360)
+        self.resize(380, 400)
 
         self._item = item.copy()
         self._color = QColor(item.color)
         self._bg_color = QColor(item.bg_color)
+        self._deleted = False
 
         self._edit_text = QLineEdit(self._item.text)
         self._edit_text.setPlaceholderText("Isi teks...")
@@ -38,7 +39,7 @@ class TextEditDialog(QDialog):
         self._spin_size.setValue(self._item.font_size)
 
         self._btn_color = QPushButton()
-        self._btn_color.setFixedHeight(24)
+        self._btn_color.setFixedHeight(30)
         self._btn_color.clicked.connect(self._pick_color)
         self._refresh_color_button()
 
@@ -55,13 +56,12 @@ class TextEditDialog(QDialog):
             lambda v: self._label_y.setText(f"{v}%")
         )
 
-        # ---------- background controls ----------
         self._chk_bg = QCheckBox("Aktifkan background")
         self._chk_bg.setChecked(self._item.bg_enabled)
         self._chk_bg.toggled.connect(self._on_bg_toggled)
 
         self._btn_bg_color = QPushButton()
-        self._btn_bg_color.setFixedHeight(24)
+        self._btn_bg_color.setFixedHeight(30)
         self._btn_bg_color.clicked.connect(self._pick_bg_color)
         self._refresh_bg_color_button()
 
@@ -88,9 +88,18 @@ class TextEditDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
+        btn_delete = QPushButton("Hapus Teks")
+        btn_delete.setObjectName("dangerBtn")
+        btn_delete.clicked.connect(self._on_delete_clicked)
+
+        bottom = QHBoxLayout()
+        bottom.addWidget(btn_delete)
+        bottom.addStretch(1)
+        bottom.addWidget(buttons)
+
         layout = QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(buttons)
+        layout.addLayout(bottom)
 
         self._on_bg_toggled(self._item.bg_enabled)
 
@@ -135,7 +144,7 @@ class TextEditDialog(QDialog):
         self._btn_bg_color.setStyleSheet(
             f"background-color: {self._bg_color.name()};"
             f"color: {'#000' if self._bg_color.lightness() > 128 else '#fff'};"
-            "border: 1px solid #334155; border-radius: 4px;"
+            "border: 2px solid #334155; border-radius: 4px;"
         )
 
     def _on_bg_toggled(self, enabled: bool):
@@ -143,7 +152,14 @@ class TextEditDialog(QDialog):
         self._slider_bg_op.setEnabled(enabled)
         self._label_bg_op.setEnabled(enabled)
 
+    def _on_delete_clicked(self):
+        self._deleted = True
+        self.accept()
+
     # ---------- public ----------
+    def was_deleted(self) -> bool:
+        return self._deleted
+
     def result_item(self) -> TextItem:
         return self._item.copy(
             text=self._edit_text.text(),
