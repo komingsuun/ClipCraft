@@ -10,13 +10,13 @@ class TextItem:
     start_sec: float = 0.0
     end_sec: float = 3.0
     x_ratio: float = 0.5
-    y_ratio: float = 0.5
+    y_ratio: float = 0.9
     font_size: int = 48
-    color: str = "#FFFFFF"
+    color: str = "#000000"
 
     # background (gaya highlight WhatsApp)
-    bg_enabled: bool = False
-    bg_color: str = "#000000"
+    bg_enabled: bool = True
+    bg_color: str = "#FFFFFF"
     bg_opacity: float = 0.5
 
     def duration(self) -> float:
