@@ -136,6 +136,13 @@ class VideoPreviewWidget(QWidget):
 
         self._build_ui()
 
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.is_playing():
+            self.pause()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def _build_ui(self):
         self._stack = QStackedLayout(self)
         self._stack.setContentsMargins(0, 0, 0, 0)

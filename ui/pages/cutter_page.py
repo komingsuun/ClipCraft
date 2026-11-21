@@ -1,11 +1,11 @@
 import os
 import sys
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtWidgets import (
     QCheckBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QProgressBar, QPushButton,
-    QVBoxLayout, QWidget, QSizePolicy, QDialog,
+    QVBoxLayout, QWidget, QSizePolicy, QDialog, QToolBar, QToolButton,
 )
 
 from core.ffmpeg import probe_media
@@ -151,20 +151,134 @@ class CutterPage(QWidget):
         if self.preview_widget.is_playing():
             self._auto_stop_end = None
             self.preview_widget.pause()
+            return
+
+        self._auto_stop_end = self.timeline.end_seconds()
+        pos = self.preview_widget.position()
+        start = self.timeline.start_seconds()
+        end = self.timeline.end_seconds()
+        if pos < start or pos >= end:
+            self.preview_widget.play_from(start)
         else:
-            self._auto_stop_end = self.timeline.end_seconds()
-            self.preview_widget.play_from(self.timeline.start_seconds())
+            self.preview_widget.play()
+
+    # def _on_play_preview_clicked(self):
+    #     if self.preview_widget.is_playing():
+    #         self._auto_stop_end = None
+    #         self.preview_widget.pause()
+    #     else:
+    #         self._auto_stop_end = self.timeline.end_seconds()
+    #         self.preview_widget.play_from(self.timeline.start_seconds())
 
     # ---------- UI ----------
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(20, 20, 20, 20)
+        root.setContentsMargins(20, 10, 20, 10)
         root.setSpacing(8)
 
         header = QLabel("Video Cutter")
         header.setObjectName("header")
         root.addWidget(header, stretch=0)
 
+        content_row = QHBoxLayout()
+        content_row.setSpacing(8)
+
+        # toolbar
+        self.toolbar = QToolBar()
+        self.toolbar.setIconSize(QSize(24, 24))
+        self.toolbar.setOrientation(Qt.Vertical)
+        self.toolbar.setMinimumWidth(44)  # lebar toolbar
+        self.toolbar.setMinimumHeight(200)  # beri tinggi supaya tidak runtuh
+        self.toolbar.setMovable(False)
+        self.toolbar.setStyleSheet("""
+            QToolBar {
+                background: transparent;
+                border: none;
+                spacing: 4px;
+                padding: 0;
+            }
+            QToolButton {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #2f4a63,
+                    stop:1 #233648
+                );
+                border-top: px solid #3f6280;
+                border-left: 2px solid #2b3f54;
+                border-right: 2px solid #1b2a39;
+                border-bottom: 3px solid #14202b;
+                border-radius: 6px;
+                padding: 0;
+                color: #f1f5f9;
+                font-size: 16px;
+                min-width: 36px;
+                max-width: 36px;
+                min-height: 36px;
+                max-height: 36px;
+            }
+            QToolButton:hover {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #3b5c7a,
+                    stop:1 #2a4560
+                );
+                border-top: 1px solid #5b86a8;
+                border-bottom: 2px solid #16232f;
+            }
+            QToolButton:pressed {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #1a2a38,
+                    stop:1 #263a4d
+                );
+                border-top: 2px solid #0f1922;
+                border-bottom: 1px solid #2f4a63;
+            }
+            QToolButton:disabled {
+                background-color: #1c2833;
+                border-top: 1px solid #263646;
+                border-left: 1px solid #22303e;
+                border-right: 1px solid #18232e;
+                border-bottom: 2px solid #121a22;
+                color: #5a7186;
+            }
+        """)
+        self.act_reset = self._make_action("↺", "Reset rentang ke 0 – durasi")
+        self.act_reset.triggered.connect(self._reset_range)
+        self.toolbar.addAction(self.act_reset)
+
+        self.act_source = self._make_action("📂", "Pilih file video sumber")
+        self.act_source.triggered.connect(self.browse_file)
+        self.toolbar.addAction(self.act_source)
+
+        # self.toolbar.addSeparator()
+
+        self.act_add_text = self._make_action("+T", "Tambah teks baru di posisi playhead")
+        self.act_add_text.triggered.connect(self._add_text_at_playhead)
+        self.toolbar.addAction(self.act_add_text)
+
+        self.act_clear_texts = self._make_action("🗑T", "Hapus semua teks di timeline")
+        self.act_clear_texts.triggered.connect(self._clear_all_texts)
+        self.toolbar.addAction(self.act_clear_texts)
+
+        # self.toolbar.addSeparator()
+
+        self.act_cut = self._make_action("✂️", "Mulai potong klip")
+        self.act_cut.triggered.connect(self.start_cut)
+        self.toolbar.addAction(self.act_cut)
+
+        self.act_cancel = self._make_action("✖", "Batalkan proses yang sedang berjalan")
+        self.act_cancel.triggered.connect(self.cancel_cut)
+        self.act_cancel.setEnabled(False)
+        self.toolbar.addAction(self.act_cancel)
+
+        # self.toolbar.addSeparator()
+
+        self.act_clear_log = self._make_action("🗑", "Bersihkan log")
+        self.act_clear_log.triggered.connect(lambda: self.log_output.clear())
+        self.toolbar.addAction(self.act_clear_log)
+
+        # editor container
         editor_container = QFrame()
         editor_container.setObjectName("editorContainer")
         editor_container.setStyleSheet("""
@@ -236,81 +350,55 @@ class CutterPage(QWidget):
         """)
         editor_layout.addWidget(self.progress_bar, stretch=0)
 
-        root.addWidget(editor_container, stretch=1)
+        content_row.addWidget(editor_container, stretch=1)
+        content_row.addWidget(self.toolbar, stretch=0)
+
+        root.addLayout(content_row, stretch=1)
+
+        # baris atas: start | end | stretch | status
+        top_row = QHBoxLayout()
+        top_row.setSpacing(6)
+
+        self.start_input = QLineEdit()
+        self.start_input.setPlaceholderText("0:00.00")
+        self.start_input.setMaximumWidth(110)
+        self.start_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.start_input.setStyleSheet("font-weight: 500; font-size: 16px;")
+        self.start_input.editingFinished.connect(self._on_start_edit)
+        top_row.addWidget(self.start_input)
+
+        self.end_input = QLineEdit()
+        self.end_input.setPlaceholderText("0:00.00")
+        self.end_input.setMaximumWidth(110)
+        self.end_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.end_input.setStyleSheet("font-weight: 500;  font-size: 16px;")
+        self.end_input.editingFinished.connect(self._on_end_edit)
+        top_row.addWidget(self.end_input)
+
+        top_row.addStretch(1)
 
         self.thumb_status = QLabel(
             f"{self._process_text} | {self._thumb_text}"
         )
         self.thumb_status.setObjectName("detailLabel")
-        root.addWidget(self.thumb_status, stretch=0)
+        top_row.addWidget(self.thumb_status, stretch=0)
 
-        time_row = QHBoxLayout()
-
-        self.start_input = QLineEdit()
-        self.start_input.setPlaceholderText("0:00.00")
-        self.start_input.setMaximumWidth(100)
-        self.start_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.start_input.editingFinished.connect(self._on_start_edit)
-        time_row.addWidget(self.start_input)
-
-        self.end_input = QLineEdit()
-        self.end_input.setPlaceholderText("0:00.00")
-        self.end_input.setMaximumWidth(100)
-        self.end_input.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.end_input.editingFinished.connect(self._on_end_edit)
-        time_row.addWidget(self.end_input)
-
-        reset_btn = QPushButton("Reset")
-        reset_btn.setObjectName("gnrlBtn")
-        reset_btn.clicked.connect(self._reset_range)
-        time_row.addWidget(reset_btn)
-
-        browse_btn = QPushButton("Source…")
-        browse_btn.setObjectName("gnrlBtn")
-        browse_btn.clicked.connect(self.browse_file)
-        time_row.addWidget(browse_btn, stretch=0)
-
-        self.btn_add_text = QPushButton("+ Teks")
-        self.btn_add_text.setObjectName("gnrlBtn")
-        self.btn_add_text.setCursor(Qt.PointingHandCursor)
-        self.btn_add_text.clicked.connect(self._add_text_at_playhead)
-        time_row.addWidget(self.btn_add_text, stretch=1)
-
-        self.start_btn = QPushButton("Mulai Potong")
-        self.start_btn.setObjectName("primaryBtn")
-        self.start_btn.clicked.connect(self.start_cut)
-        time_row.addWidget(self.start_btn, stretch=1)
-        time_row.addStretch()
+        root.addLayout(top_row)
 
         self.reencode_cb = QCheckBox(
             "Re-encode (akurat frame-by-frame; lebih lambat)"
         )
         root.addWidget(self.reencode_cb, stretch=0)
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(0)
-        btn_row.setContentsMargins(0, 0, 0, 0)
-
-        self.cancel_btn = QPushButton("Batalkan")
-        self.cancel_btn.setObjectName("dangerBtn")
-        self.cancel_btn.setEnabled(False)
-        self.cancel_btn.clicked.connect(self.cancel_cut)
-
-        clear_btn = QPushButton("Bersihkan Log")
-        clear_btn.clicked.connect(lambda: self.log_output.clear())
-        clear_btn.setObjectName("cleanLogBtn")
-        clear_btn.setEnabled(True)
-
-        btn_row.addWidget(self.cancel_btn)
-        btn_row.addWidget(clear_btn)
-
-        time_row.addLayout(btn_row)
-        root.addLayout(time_row)
-
         root.addWidget(self._label("Log"), stretch=0)
         self.log_output = LogWidget()
-        self.log_output.setFixedHeight(150)
+        self.log_output.setFixedHeight(100)
         root.addWidget(self.log_output, stretch=0)
+
+    def _make_action(self, text: str, tooltip: str):
+        act = self.toolbar.addAction(text)
+        act.setToolTip(tooltip)
+        return act
 
     @staticmethod
     def _label(text: str) -> QLabel:
@@ -334,6 +422,18 @@ class CutterPage(QWidget):
 
     # ---------- file ----------
     def browse_file(self):
+        if self.timeline.texts():
+            ans = QMessageBox.question(
+                self,
+                "Konfirmasi",
+                "Membuka source baru akan menghapus teks lama. Lanjutkan?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if ans != QMessageBox.Yes:
+                return
+            self.timeline.clear_texts()
+
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Pilih Video",
@@ -391,6 +491,21 @@ class CutterPage(QWidget):
         self.thumb_worker.start()
 
         self._request_preview_update(0.0)
+
+    def _clear_all_texts(self):
+        if not self.timeline.texts():
+            return
+        ans = QMessageBox.question(
+            self,
+            "Konfirmasi",
+            "Hapus semua teks di timeline?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ans != QMessageBox.Yes:
+            return
+        self.timeline.clear_texts()
+        self.log("Semua teks dihapus.")
 
     # ---------- thumbnail callbacks ----------
     def _on_thumbnail_ready(self, index: int, image):
@@ -505,8 +620,8 @@ class CutterPage(QWidget):
 
         self.progress_bar.setValue(0)
         self._set_process_text("Memulai pemotongan...")
-        self.start_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(True)
+        self.act_cut.setEnabled(False)
+        self.act_cancel.setEnabled(True)
         self.log("-" * 40)
         self.log(f"Range : {_fmt_time(start)} → {_fmt_time(end)}")
 
@@ -542,15 +657,15 @@ class CutterPage(QWidget):
             self.worker.cancel()
             self._set_process_text("Membatalkan...")
             self.log("Permintaan pembatalan dikirim.")
-            self.cancel_btn.setEnabled(False)
+            self.act_cancel.setEnabled(False)
 
     def on_progress(self, percent: float, speed: str, eta: str, status: str):
         self.progress_bar.setValue(int(percent))
         self._set_process_text(status)
 
     def on_finished(self, success: bool, message: str):
-        self.start_btn.setEnabled(True)
-        self.cancel_btn.setEnabled(False)
+        self.act_cut.setEnabled(True)
+        self.act_cancel.setEnabled(False)
         if success:
             self.progress_bar.setValue(100)
             self._set_process_text("Selesai ✓")

@@ -133,6 +133,16 @@ class TimelineWidget(QWidget):
         self._thumbs = []
         self.update()
 
+    def clear_texts(self):
+        if not self._texts and self._selected_text is None:
+            return
+        self._texts = []
+        self._selected_text = None
+        self._next_text_id = 1
+        self.text_selected.emit(None)
+        self.texts_changed.emit()
+        self.update()
+
     def loaded_thumbnail_count(self) -> int:
         return sum(1 for p in self._thumbs if not p.isNull())
 
