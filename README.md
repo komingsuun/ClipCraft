@@ -133,7 +133,8 @@ Video Downloader - CLI.py
 
 ## Video Cutter
 
-<img width="960" height="540" alt="ClipCraft_015" src="https://github.com/user-attachments/assets/9f5fc8bf-ebd2-4653-b7c7-b3ba5e1634c7" />
+<img width="960" height="540" alt="ClipCraft_020" src="https://github.com/user-attachments/assets/7ea11223-853d-4736-8f52-a25270f55a66" />
+
 
 ## Add Text / Subtitle
 
