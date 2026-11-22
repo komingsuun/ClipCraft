@@ -146,6 +146,7 @@ Video Downloader - CLI.py
 
 This application allows you to download videos from various popular websites. It is what it is — no fancy UI, no complicated setup. Just run it, paste your link, and start downloading.
 
+## Legal
 
 📄 License
 
@@ -157,6 +158,11 @@ Please refer to the respective projects for their licensing terms.
 SABR Downloader uses third-party software,including yt-dlp, which is distributed under its own respective license.
 
 See the respective projects for their licensing terms.
+
+
+📄 Term of Service
+
+Users of this application must comply with the [Term of Service](TERMS.md)
 
 
 
