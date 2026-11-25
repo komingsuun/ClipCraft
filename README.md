@@ -113,7 +113,7 @@ cp yt_dlp_plugins/extractor/threads.py /your_venv_directory/.venv/lib/python3.12
 
 ### GUI
 
-<img width="960" height="540" alt="ClipCraft_012" src="https://github.com/user-attachments/assets/b7aa195a-0180-4e68-b408-8effefb3797e" />
+<img width="847" height="747" alt="ClipCraft_012" src="https://github.com/user-attachments/assets/b7aa195a-0180-4e68-b408-8effefb3797e" />
 
 For YouTube video **ClipCart** has special ability by downloading "The Most Played Segment", user just check the checkbox under the "Folder Keluaran" then the application automaticaly check if available or not.
 
@@ -124,21 +124,31 @@ If user use this range segment then ClipCart will set to download only this segm
 Video Downloader - CLI.py
  
 
-<img width="960" height="540" alt="Selection_1330" src="https://github.com/user-attachments/assets/72d079de-9bc3-44d4-83d8-ae887905be1a" />
+<img width="847" height="747" alt="Selection_1330" src="https://github.com/user-attachments/assets/72d079de-9bc3-44d4-83d8-ae887905be1a" />
  
 
 ## Video Compressor
 
-<img width="960" height="540" alt="ClipCraft_013" src="https://github.com/user-attachments/assets/6f3f3abf-e157-4c99-a010-fef6b09bdfbb" />
+<img width="847" height="747" alt="ClipCraft_013" src="https://github.com/user-attachments/assets/6f3f3abf-e157-4c99-a010-fef6b09bdfbb" />
 
 ## Video Cutter
+### Cut video from file
+This is standard feature to cut video based on existing video
 
-<img width="960" height="540" alt="ClipCraft_020" src="https://github.com/user-attachments/assets/7ea11223-853d-4736-8f52-a25270f55a66" />
+<img width="847" height="747" alt="ClipCraft_027" src="https://github.com/user-attachments/assets/1277ea7a-594f-4384-9b95-6ea9a47bc9c7" />
+
+### Cut video from url
+
+<img width="847" height="747" alt="ClipCraft_025" src="https://github.com/user-attachments/assets/3073cbcd-6bec-49f9-ba79-a011c455a5a5" />
+
+### Simple timeline appeared when source is valid
+
+<img width="847" height="747" alt="ClipCraft_028" src="https://github.com/user-attachments/assets/a3137276-34ac-4761-9f13-e8642d4c7767" />
 
 
 ## Add Text / Subtitle
 
-<img width="577" height="536" alt="Selection_1406" src="https://github.com/user-attachments/assets/b3ec289f-6dbe-4599-8795-a9ba452f28df" />
+<img width="847" height="747" alt="Selection_1406" src="https://github.com/user-attachments/assets/b3ec289f-6dbe-4599-8795-a9ba452f28df" />
 
 
 **Just another vibe-coded project.** 😎
