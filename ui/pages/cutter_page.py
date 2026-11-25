@@ -533,43 +533,6 @@ class DownloadByUrlDialog(QDialog):
 
         return None
 
-    # def on_finished(self, success: bool, info: dict):
-    #     self.btn_download.setEnabled(True)
-    #     self.btn_cancel.setEnabled(False)
-    #     self.btn_close.setEnabled(True)
-    #
-    #     self.worker = None
-    #     self._reset_most_played()
-    #
-    #     if success:
-    #         self.progress_bar.setValue(100)
-    #         self.status_label.setText("Selesai ✓")
-    #         self.log("-" * 60)
-    #         self.log(f"Judul  : {info.get('title', '-')}")
-    #         self.log(f"Situs  : {info.get('extractor_key', '-')}")
-    #         filepath = info.get("_filename")
-    #         if filepath:
-    #             filepath = os.path.abspath(filepath)
-    #             self.log(f"File   : {filepath}")
-    #
-    #         self.log(f"Folder : {os.path.abspath(self.TMP_DIR)}")
-    #         self.log("-" * 60)
-    #
-    #         if filepath and os.path.isfile(filepath):
-    #             self._downloaded_filepath = filepath
-    #             self.status_label.setText("Selesai ✓ — klik Tutup untuk membuka video")
-    #             self.btn_close.setEnabled(True)
-    #             return
-    #
-    #         self.status_label.setText("Download selesai, tetapi file tidak ditemukan.")
-    #         QMessageBox.warning(
-    #             self,
-    #             "File Tidak Ditemukan",
-    #             "Download selesai, tetapi file hasil unduhan tidak ditemukan."
-    #         )
-    #     else:
-    #         self.status_label.setText("Gagal / Dibatalkan")
-
     def finish_dialog(self):
         """Serahkan file hasil download ke CutterPage saat tombol Tutup ditekan."""
         filepath = self._downloaded_filepath
