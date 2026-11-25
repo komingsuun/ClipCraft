@@ -1,3 +1,4 @@
+import glob
 import os
 import re
 import subprocess
@@ -282,6 +283,115 @@ class DownloadWorker(QThread):
         if self._ffmpeg_process and self._ffmpeg_process.poll() is None:
             self._ffmpeg_process.terminate()
 
+class ClipCraftDownloadWorker(QThread):
+    progress_changed = Signal(float, str, str, str)  # percent, speed, eta, status
+    log_message = Signal(str)
+    finished_signal = Signal(bool, str)              # success, output_path
+
+    def __init__(
+        self,
+        url: str,
+        tmp_dir: str,
+        cookies_from_browser: str | None = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.url = url
+        self.tmp_dir = os.path.abspath(tmp_dir)
+        self.cookies_from_browser = cookies_from_browser
+        self._cancel_requested = False
+
+    def _cleanup_old(self):
+        for path in glob.glob(os.path.join(self.tmp_dir, "clipcraft_tmp_cut.*")):
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except OSError as exc:
+                    self.log_message.emit(f"Gagal hapus file lama {path}: {exc}")
+
+    def progress_hook(self, d):
+        if self._cancel_requested:
+            raise yt_dlp.utils.DownloadCancelled("Dibatalkan oleh pengguna")
+        if d["status"] == "downloading":
+            percent_str = d.get("_percent_str", "0%").strip()
+            try:
+                percent_val = float(percent_str.replace("%", "").strip())
+            except ValueError:
+                percent_val = 0.0
+            self.progress_changed.emit(
+                percent_val,
+                d.get("_speed_str", "N/A").strip(),
+                d.get("_eta_str", "N/A").strip(),
+                "Mengunduh...",
+            )
+        elif d["status"] == "finished":
+            self.progress_changed.emit(100.0, "-", "-", "Selesai")
+
+    def _resolve_output_path(self, info) -> str:
+        if isinstance(info, dict):
+            candidates = [info.get("filepath"), info.get("_filename")]
+            for item in info.get("requested_downloads") or []:
+                candidates.extend([item.get("filepath"), item.get("_filename")])
+            for cand in candidates:
+                if cand and os.path.isfile(cand):
+                    return os.path.abspath(cand)
+
+        # fallback: cari di folder tmp
+        candidates = [
+            p for p in glob.glob(os.path.join(self.tmp_dir, "clipcraft_tmp_cut.*"))
+            if not p.endswith((".part", ".ytdl", ".temp"))
+        ]
+        if candidates:
+            return os.path.abspath(max(candidates, key=os.path.getmtime))
+        return ""
+
+    def run(self):
+        os.makedirs(self.tmp_dir, exist_ok=True)
+        self._cleanup_old()
+
+        ydl_opts = {
+            "format": "bv*+ba/b",
+            "outtmpl": os.path.join(self.tmp_dir, "clipcraft_tmp_cut.%(ext)s"),
+            "noplaylist": True,
+            "progress_hooks": [self.progress_hook],
+            "continuedl": True,
+            "overwrites": True,
+            "ignoreerrors": False,
+            "writethumbnail": False,
+            "addmetadata": False,
+            "verbose": False,
+        }
+
+        if self.cookies_from_browser:
+            ydl_opts["cookiesfrombrowser"] = (
+                self.cookies_from_browser, None, None, None
+            )
+            self.log_message.emit(f"Menggunakan cookie dari browser: {self.cookies_from_browser}")
+
+        success = False
+        final_path = ""
+        try:
+            self.log_message.emit(f"Memproses URL: {self.url}")
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(self.url, download=True)
+
+            final_path = self._resolve_output_path(info)
+            success = bool(final_path)
+            if success:
+                self.log_message.emit(f"Tersimpan: {final_path}")
+            else:
+                self.log_message.emit("File hasil tidak ditemukan di folder tmp.")
+        except yt_dlp.utils.DownloadCancelled as exc:
+            self.log_message.emit(f"Unduhan dibatalkan: {exc}")
+        except yt_dlp.utils.DownloadError as exc:
+            self.log_message.emit(f"Unduhan gagal: {exc}")
+        except Exception as exc:
+            self.log_message.emit(f"Error {type(exc).__name__}: {exc}")
+
+        self.finished_signal.emit(success, final_path)
+
+    def cancel(self):
+        self._cancel_requested = True
 
 # ============================================================
 # Kompres file lokal

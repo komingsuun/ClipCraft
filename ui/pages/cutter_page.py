@@ -1,16 +1,22 @@
 import os
 import sys
 
+from PySide6 import QtCore, QtWidgets
 from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
     QLineEdit, QMessageBox, QProgressBar, QPushButton,
     QVBoxLayout, QWidget, QSizePolicy, QDialog, QToolBar, QToolButton,
 )
 
+from core.common import CustomTitleBar, STYLESHEET
+from core.config import load_config
+from core.downloader import COOKIE_BROWSERS
 from core.ffmpeg import probe_media
+from core.segment_workers import HeatmapCheckWorker, MostPlayedDownloadWorker
 from core.video_cutter import ensure_cut_dir
-from core.workers import CutterWorker, TextBurnInWorker, ThumbnailWorker
+from core.workers import CutterWorker, TextBurnInWorker, ThumbnailWorker, DownloadWorker
 from ui.widgets.log_widget import LogWidget
 from ui.widgets.timeline_widget import TimelineWidget
 from ui.widgets.video_preview_widget import VideoPreviewWidget
@@ -31,7 +37,6 @@ def _parse_time(text: str) -> float:
         return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
     raise ValueError("format waktu tidak dikenal")
 
-
 def _fmt_time(seconds: float) -> str:
     seconds = max(0.0, float(seconds))
     h = int(seconds // 3600)
@@ -41,11 +46,572 @@ def _fmt_time(seconds: float) -> str:
         return f"{h}:{m:02d}:{s:05.2f}"
     return f"{m}:{s:05.2f}"
 
+class DownloadByUrlDialog(QDialog):
+    # Sinyal untuk meneruskan file hasil unduhan ke video cutter.
+    download_ready = QtCore.Signal(str)
 
+    TMP_DIR = os.path.join("downloads", "tmp")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            QtCore.Qt.WindowType.Dialog
+            | QtCore.Qt.WindowType.FramelessWindowHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._drag_pos = None
+
+        # Pastikan folder tmp ada.
+        os.makedirs(self.TMP_DIR, exist_ok=True)
+
+        cfg = load_config()
+        self.worker = None
+        self.heatmap_worker = None
+        self._downloaded_filepath = None
+
+        self._build_ui(cfg)
+        self._apply_title_bar_style()
+        self._title_bar.installEventFilter(self)
+
+    # ------------------------------------------------------------------ UI
+    def _build_ui(self, cfg):
+        main_frame = QFrame()
+        main_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        main_frame.setFrameShadow(QFrame.Shadow.Raised)
+
+        main_layout = QVBoxLayout(main_frame)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        self._title_bar = CustomTitleBar(self, only_close=True)
+        main_layout.addWidget(self._title_bar)
+
+        # ---------------- Body ----------------
+        frame = QFrame()
+        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        frame.setFrameShadow(QFrame.Shadow.Raised)
+        frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        frame.setStyleSheet(
+            "background-color: rgba(30, 30, 30, 0.8); padding: 10px;"
+        )
+        body = QVBoxLayout(frame)
+        body.setContentsMargins(5, 15, 5, 15)
+        body.setSpacing(8)
+
+        # URL
+        url_row = QHBoxLayout()
+        label_url = QLabel("URL Video")
+        label_url.setObjectName("label_input_url")
+        label_url.setStyleSheet("background-color: transparent;")
+        url_row.addWidget(label_url)
+
+        self.input_url = QLineEdit(frame)
+        self.input_url.setObjectName("input_url")
+        self.input_url.setMinimumWidth(400)
+        self.input_url.setStyleSheet(
+            "background-color: rgba(30, 30, 30, 0.8);"
+        )
+        self.input_url.returnPressed.connect(self.download)
+        url_row.addWidget(self.input_url, stretch=1)
+        body.addLayout(url_row)
+
+        # Cookies + Compression
+        opt_row = QHBoxLayout()
+        opt_row.addWidget(self._label("Cookie Browser"))
+        self.cookies_combo = QtWidgets.QComboBox()
+        for label, value in COOKIE_BROWSERS:
+            self.cookies_combo.addItem(label, value)
+        idx = self.cookies_combo.findData(
+            cfg["downloader"]["cookies_browser"]
+        )
+        self.cookies_combo.setCurrentIndex(max(0, idx))
+        self.cookies_combo.setMinimumWidth(160)
+        opt_row.addWidget(self.cookies_combo)
+
+        opt_row.addSpacing(16)
+        opt_row.addWidget(self._label("Kualitas"))
+        self.compression_combo = QtWidgets.QComboBox()
+        self.compression_combo.addItem("Original — tanpa kompresi", "Original")
+        self.compression_combo.addItem("High — kualitas tinggi", "High")
+        self.compression_combo.addItem("Balanced — rekomendasi", "Balanced")
+        self.compression_combo.addItem("Compact — ukuran lebih kecil", "Compact")
+        self.compression_combo.addItem("Small — ukuran minimal", "Small")
+        idx = self.compression_combo.findData(
+            cfg["downloader"]["compression_preset"]
+        )
+        self.compression_combo.setCurrentIndex(max(0, idx))
+        self.compression_combo.setMinimumWidth(200)
+        opt_row.addWidget(self.compression_combo)
+        opt_row.addStretch()
+        body.addLayout(opt_row)
+
+        # Checkbox most-played
+        cb_row = QHBoxLayout()
+        self.most_played_cb = QCheckBox("YT Most Played Segment")
+        self.most_played_cb.setObjectName("most_played_cb")
+        self.most_played_cb.setToolTip(
+            "Periksa heatmap YouTube dan unduh segmen dengan pemutaran "
+            "tertinggi. YouTube only!"
+        )
+        self.most_played_cb.toggled.connect(self.on_most_played_toggled)
+        cb_row.addWidget(self.most_played_cb)
+        cb_row.addStretch()
+        body.addLayout(cb_row)
+
+        # Progress
+        progress_frame = QFrame()
+        progress_frame.setObjectName("progressFrame")
+        pl = QVBoxLayout(progress_frame)
+        pl.setContentsMargins(10, 8, 10, 8)
+        pl.setSpacing(6)
+        self.status_label = QLabel("Siap")
+        self.status_label.setObjectName("statusLabel")
+        pl.addWidget(self.status_label)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        pl.addWidget(self.progress_bar)
+        self.detail_label = QLabel("Kecepatan: -   |   ETA: -")
+        self.detail_label.setObjectName("detailLabel")
+        pl.addWidget(self.detail_label)
+        body.addWidget(progress_frame)
+
+        # Log
+        self.log_output = LogWidget()
+        self.log_output.setMaximumHeight(110)
+        body.addWidget(self.log_output)
+
+        main_layout.addWidget(frame, stretch=1)
+
+        # ---------------- Footer ----------------
+        btn_frame = QFrame()
+        btn_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        btn_frame.setFrameShadow(QFrame.Shadow.Sunken)
+        btn_frame.setStyleSheet(
+            """
+            background-color: rgba(30, 30, 30, 0.8);
+            padding: 10px;
+            border-bottom-left-radius: 8px;
+            border-bottom-right-radius: 8px;
+            """
+        )
+        footer = QHBoxLayout(btn_frame)
+        footer.setContentsMargins(5, 5, 5, 5)
+        footer.setSpacing(8)
+
+        self.btn_download = QPushButton("Download")
+        self.btn_download.setMaximumWidth(100)
+        self.btn_download.clicked.connect(self.download)
+
+        self.btn_cancel = QPushButton("Batalkan")
+        self.btn_cancel.setMaximumWidth(100)
+        self.btn_cancel.setEnabled(False)
+        self.btn_cancel.clicked.connect(self.cancel_download)
+
+        self.btn_close = QPushButton("Tutup")
+        self.btn_close.setMaximumWidth(100)
+        self.btn_close.clicked.connect(self.finish_dialog)
+
+        footer.addWidget(self.most_played_cb)
+        footer.addStretch()
+        footer.addWidget(self.btn_download)
+        footer.addWidget(self.btn_cancel)
+        footer.addWidget(self.btn_close)
+
+        main_layout.addWidget(btn_frame)
+        self.setLayout(main_layout)
+
+    def _apply_title_bar_style(self):
+        self._title_bar.setStyleSheet(
+            """
+            QWidget {
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
+                border-style: solid;
+                border-width: 1px;
+                border-color: transparent;
+                background-color: rgba(255, 255, 255, 0.9);
+                color: black;
+            }
+            QCheckBox { color: #cbd5e1; spacing: 8px; }
+            QCheckBox::indicator {
+                width: 16px; height: 16px; border-radius: 4px;
+                border: 1px solid #475569; background-color: #1e293b;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #0ea5e9; border-color: #0ea5e9;
+            }
+            QPushButton#titleBarCloseBtn {
+                background-color: #ff0000;
+                border: none;
+                border-radius: 12px;
+                color: #ffffff;
+                font-size: 14px;
+                font-weight: 700;
+                padding: 0px;
+                margin-right: 5px;
+                min-width: 26px; max-width: 26px;
+                min-height: 26px; max-height: 26px;
+            }
+            QPushButton#titleBarCloseBtn:hover { background-color: #ff0000; color: #ffff00; }
+            QPushButton#titleBarCloseBtn:pressed { background-color: #273449; }
+            QPushButton#winBtn {
+                background-color: transparent;
+                border: none;
+                color: #cbd5e1;
+                font-size: 14px;
+                font-weight: 700;
+                min-width: 46px; max-width: 46px;
+                min-height: 36px; max-height: 36px;
+            }
+            QPushButton#winBtn:hover { background-color: #1e293b; color: #e2e8f0; }
+            QPushButton#winBtn:pressed { background-color: #273449; }
+            """
+        )
+
+    @staticmethod
+    def _label(text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setObjectName("fieldLabel")
+        lbl.setStyleSheet("color: #cbd5e1; background: transparent;")
+        return lbl
+
+    # ------------------------------------------------------------- helpers
+    def log(self, message: str):
+        self.log_output.append_log(message)
+
+    def _set_busy(self, busy: bool, status=None):
+        self.btn_download.setEnabled(not busy)
+        self.btn_cancel.setEnabled(busy)
+        self.btn_close.setEnabled(not busy)
+        if status:
+            self.status_label.setText(status)
+
+    def has_active_worker(self) -> bool:
+        return (
+            (self.worker is not None and self.worker.isRunning())
+            or (
+                self.heatmap_worker is not None
+                and self.heatmap_worker.isRunning()
+            )
+        )
+
+    # ----------------------------------------------------- most-played flow
+    def on_most_played_toggled(self, checked: bool):
+        if not checked:
+            return
+
+        if self.has_active_worker():
+            self.most_played_cb.blockSignals(True)
+            self.most_played_cb.setChecked(False)
+            self.most_played_cb.blockSignals(False)
+            return
+
+        url = self.input_url.text().strip()
+        if not url:
+            QMessageBox.warning(self, "Peringatan", "URL tidak boleh kosong.")
+            self.most_played_cb.setChecked(False)
+            return
+
+        self.progress_bar.setValue(0)
+        self.detail_label.setText("Memeriksa heatmap...")
+        self.status_label.setText("Memeriksa heatmap URL...")
+        self.btn_download.setEnabled(False)
+        self.btn_cancel.setEnabled(True)
+        self.log("=" * 60)
+        self.log(f"Memeriksa heatmap: {url}")
+
+        self.heatmap_worker = HeatmapCheckWorker(
+            url=url,
+            cookies_from_browser=self.cookies_combo.currentData(),
+        )
+        self.heatmap_worker.log_message.connect(self.log)
+        self.heatmap_worker.result_ready.connect(self.on_heatmap_checked)
+        self.heatmap_worker.start()
+
+    def on_heatmap_checked(self, has_heatmap: bool, segment: dict, error: str):
+        self.heatmap_worker = None
+        self.btn_download.setEnabled(True)
+        self.btn_cancel.setEnabled(False)
+        self.detail_label.setText("Kecepatan: -   |   ETA: -")
+
+        if error:
+            cancelled = "dibatalkan" in error.lower()
+            self.status_label.setText(
+                "Pemeriksaan dibatalkan" if cancelled else "Gagal memeriksa heatmap"
+            )
+            if not cancelled:
+                QMessageBox.warning(self, "Gagal Memeriksa URL", error)
+            self.most_played_cb.setChecked(False)
+            return
+
+        if not has_heatmap:
+            self.status_label.setText("Heatmap tidak ditemukan")
+            QMessageBox.information(
+                self,
+                "Heatmap Tidak Tersedia",
+                "URL yang diberikan tidak memiliki data heatmap, "
+                "silakan masukkan url yang lain!",
+                QMessageBox.Ok,
+            )
+            self.most_played_cb.setChecked(False)
+            return
+
+        start_seg = float(segment["start"])
+        end_seg = float(segment["end"])
+        message = (
+            "Benar Anda akan download segmen most played "
+            f"{start_seg:.0f}-{end_seg:.0f}?"
+        )
+        reply = QMessageBox.question(
+            self,
+            "Konfirmasi Most Played Segment",
+            message,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply == QMessageBox.Yes:
+            self.start_most_played_download(segment)
+        else:
+            self.status_label.setText("Siap")
+            self.progress_bar.setValue(0)
+            self.detail_label.setText("Kecepatan: -   |   ETA: -")
+            self.most_played_cb.setChecked(False)
+
+    def start_most_played_download(self, segment: dict):
+        if self.has_active_worker():
+            return
+
+        browser = self.cookies_combo.currentData()
+        preset = self.compression_combo.currentData()
+
+        self.progress_bar.setValue(0)
+        self.status_label.setText("Memulai unduhan segmen...")
+        self.detail_label.setText("Kecepatan: -   |   ETA: -")
+        self._set_busy(True)
+        self.log("=" * 60)
+        self.log(
+            f"Most Played: {segment['start']:.0f}s–{segment['end']:.0f}s"
+        )
+        self.log(f"Folder tmp: {self.TMP_DIR}")
+        self.log(f"Preset output: {preset}")
+        self.log(f"Cookie browser: {browser or 'tidak ada'}")
+
+        self.worker = MostPlayedDownloadWorker(
+            url=self.input_url.text().strip(),
+            output_dir=self.TMP_DIR,
+            segment=segment,
+            compression_preset=preset,
+            cookies_from_browser=browser,
+        )
+        self.worker.progress_changed.connect(self.on_progress)
+        self.worker.log_message.connect(self.log)
+        self.worker.finished_signal.connect(self.on_finished)
+        self.worker.start()
+
+    # -------------------------------------------------------- normal flow
+    def download(self):
+        url = self.input_url.text().strip()
+        if not url:
+            QMessageBox.warning(self, "Peringatan", "URL tidak boleh kosong.")
+            return
+
+        if self.has_active_worker():
+            return
+
+        # Checkbox most-played menjalankan alur cek heatmap sendiri.
+        if self.most_played_cb.isChecked():
+            return
+
+        browser = self.cookies_combo.currentData()
+        self.progress_bar.setValue(0)
+        self.status_label.setText("Memulai unduhan...")
+        self.detail_label.setText("Kecepatan: -   |   ETA: -")
+        self.btn_download.setEnabled(False)
+        self.btn_cancel.setEnabled(True)
+        self.log("=" * 60)
+        self.log(f"Memulai unduhan: {url}")
+        self.log(f"Folder tmp: {self.TMP_DIR}")
+        self.log(f"Preset output: {self.compression_combo.currentData()}")
+        self.log(f"Cookie browser: {browser or 'tidak ada'}")
+
+        self.worker = DownloadWorker(
+            url=url,
+            output_dir=self.TMP_DIR,
+            noplaylist=True,
+            compression_preset=self.compression_combo.currentData(),
+            cookies_from_browser=browser,
+        )
+        self.worker.progress_changed.connect(self.on_progress)
+        self.worker.log_message.connect(self.log)
+        self.worker.finished_signal.connect(self.on_finished)
+        self.worker.start()
+
+    def cancel_download(self):
+        if self.heatmap_worker and self.heatmap_worker.isRunning():
+            self.heatmap_worker.cancel()
+            self.status_label.setText("Membatalkan pemeriksaan heatmap...")
+            self.log("Permintaan pembatalan pemeriksaan heatmap dikirim.")
+            self.btn_cancel.setEnabled(False)
+            return
+
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.status_label.setText("Membatalkan...")
+            self.log("Permintaan pembatalan dikirim.")
+            self.btn_cancel.setEnabled(False)
+
+    # --------------------------------------------------------- callbacks
+    def on_progress(self, percent: float, speed: str, eta: str, status: str):
+        self.progress_bar.setValue(max(0, min(100, int(percent))))
+        self.status_label.setText(status)
+        self.detail_label.setText(f"Kecepatan: {speed}   |   ETA: {eta}")
+
+    def on_finished(self, success: bool, info: dict):
+        self.btn_download.setEnabled(True)
+        self.btn_cancel.setEnabled(False)
+        self.btn_close.setEnabled(True)
+
+        self.worker = None
+        self._reset_most_played()
+
+        if not success:
+            self.status_label.setText("Gagal / Dibatalkan")
+            return
+
+        self.progress_bar.setValue(100)
+        self.status_label.setText("Selesai ✓")
+        self.log("-" * 60)
+        self.log(f"Judul  : {info.get('title', '-')}")
+        self.log(f"Situs  : {info.get('extractor_key', '-')}")
+
+        filepath = self._resolve_output_path(info)
+        if filepath:
+            self.log(f"File   : {filepath}")
+        self.log(f"Folder : {os.path.abspath(self.TMP_DIR)}")
+        self.log("-" * 60)
+
+        if not filepath or not os.path.isfile(filepath):
+            self.status_label.setText("Download selesai, tetapi file tidak ditemukan.")
+            QMessageBox.warning(
+                self,
+                "File Tidak Ditemukan",
+                "Download selesai, tetapi file hasil unduhan tidak ditemukan."
+            )
+            return
+
+        # Serahkan ke video cutter
+        self._downloaded_filepath = filepath
+        self.download_ready.emit(filepath)
+        self.accept()
+
+    @staticmethod
+    def _resolve_output_path(info: dict) -> str | None:
+        """Cari path file hasil unduhan dari dict info yt-dlp."""
+        if not isinstance(info, dict):
+            return None
+
+        # 1. Key standar yt-dlp
+        for key in ("filepath", "_filename"):
+            p = info.get(key)
+            if p and os.path.isfile(p):
+                return os.path.abspath(p)
+
+        # 2. requested_downloads (hasil merge bv+ba)
+        for item in info.get("requested_downloads") or []:
+            for key in ("filepath", "_filename"):
+                p = item.get(key)
+                if p and os.path.isfile(p):
+                    return os.path.abspath(p)
+
+        # 3. entries (playlist — ambil yang pertama)
+        for entry in info.get("entries") or []:
+            p = DownloadByUrlDialog._resolve_output_path(entry)
+            if p:
+                return p
+
+        return None
+
+    # def on_finished(self, success: bool, info: dict):
+    #     self.btn_download.setEnabled(True)
+    #     self.btn_cancel.setEnabled(False)
+    #     self.btn_close.setEnabled(True)
+    #
+    #     self.worker = None
+    #     self._reset_most_played()
+    #
+    #     if success:
+    #         self.progress_bar.setValue(100)
+    #         self.status_label.setText("Selesai ✓")
+    #         self.log("-" * 60)
+    #         self.log(f"Judul  : {info.get('title', '-')}")
+    #         self.log(f"Situs  : {info.get('extractor_key', '-')}")
+    #         filepath = info.get("_filename")
+    #         if filepath:
+    #             filepath = os.path.abspath(filepath)
+    #             self.log(f"File   : {filepath}")
+    #
+    #         self.log(f"Folder : {os.path.abspath(self.TMP_DIR)}")
+    #         self.log("-" * 60)
+    #
+    #         if filepath and os.path.isfile(filepath):
+    #             self._downloaded_filepath = filepath
+    #             self.status_label.setText("Selesai ✓ — klik Tutup untuk membuka video")
+    #             self.btn_close.setEnabled(True)
+    #             return
+    #
+    #         self.status_label.setText("Download selesai, tetapi file tidak ditemukan.")
+    #         QMessageBox.warning(
+    #             self,
+    #             "File Tidak Ditemukan",
+    #             "Download selesai, tetapi file hasil unduhan tidak ditemukan."
+    #         )
+    #     else:
+    #         self.status_label.setText("Gagal / Dibatalkan")
+
+    def finish_dialog(self):
+        """Serahkan file hasil download ke CutterPage saat tombol Tutup ditekan."""
+        filepath = self._downloaded_filepath
+        if filepath and os.path.isfile(filepath):
+            self.download_ready.emit(filepath)
+            self.accept()
+            return
+        self.reject()
+
+    def _reset_most_played(self):
+        if self.most_played_cb.isChecked():
+            self.most_played_cb.setChecked(False)
+
+    def request_cancel(self):
+        """Dipanggil saat dialog ditutup (reject/close) agar worker berhenti bersih."""
+        if self.heatmap_worker and self.heatmap_worker.isRunning():
+            self.heatmap_worker.cancel()
+            self.heatmap_worker.wait(2000)
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            self.worker.wait(2000)
+
+    # ------------------------------------------------------- window drag
+    def eventFilter(self, obj, event):
+        if obj is not None and event.type() == QtCore.QEvent.Type.MouseButtonPress:
+            if event.button() == QtCore.Qt.MouseButton.LeftButton:
+                self.windowHandle().startSystemMove()
+                return True
+        return super().eventFilter(obj, event)
+
+    def closeEvent(self, event):
+        self.request_cancel()
+        super().closeEvent(event)
+
+    def reject(self):
+        self.request_cancel()
+        super().reject()
 class CutterPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.worker = None
+        # self.url_download_worker = DownloadWorker()
         self.thumb_worker: ThumbnailWorker | None = None
         self._duration = 0.0
         self._video_path = ""
@@ -162,14 +728,6 @@ class CutterPage(QWidget):
         else:
             self.preview_widget.play()
 
-    # def _on_play_preview_clicked(self):
-    #     if self.preview_widget.is_playing():
-    #         self._auto_stop_end = None
-    #         self.preview_widget.pause()
-    #     else:
-    #         self._auto_stop_end = self.timeline.end_seconds()
-    #         self.preview_widget.play_from(self.timeline.start_seconds())
-
     # ---------- UI ----------
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -181,7 +739,7 @@ class CutterPage(QWidget):
         root.addWidget(header, stretch=0)
 
         content_row = QHBoxLayout()
-        content_row.setSpacing(8)
+        content_row.setSpacing(4)
 
         # toolbar
         self.toolbar = QToolBar()
@@ -243,15 +801,22 @@ class CutterPage(QWidget):
                 color: #5a7186;
             }
         """)
+        self.toolbar.addSeparator()
         self.act_reset = self._make_action("↺", "Reset rentang ke 0 – durasi")
         self.act_reset.triggered.connect(self._reset_range)
         self.toolbar.addAction(self.act_reset)
+
+        self.toolbar.addSeparator()
 
         self.act_source = self._make_action("📂", "Pilih file video sumber")
         self.act_source.triggered.connect(self.browse_file)
         self.toolbar.addAction(self.act_source)
 
-        # self.toolbar.addSeparator()
+        self.act_url = self._make_action("🔗", "Copy & paste url kedalam input text")
+        self.act_url.triggered.connect(self.browse_url)
+        self.toolbar.addAction(self.act_url)
+
+        self.toolbar.addSeparator()
 
         self.act_add_text = self._make_action("+T", "Tambah teks baru di posisi playhead")
         self.act_add_text.triggered.connect(self._add_text_at_playhead)
@@ -422,6 +987,15 @@ class CutterPage(QWidget):
 
     # ---------- file ----------
     def browse_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Pilih Video",
+            "",
+            "Video Files (*.mp4 *.mkv *.avi *.mov *.webm *.flv *.ts);;All Files (*)",
+        )
+        if not path:
+            return
+
         if self.timeline.texts():
             ans = QMessageBox.question(
                 self,
@@ -434,32 +1008,65 @@ class CutterPage(QWidget):
                 return
             self.timeline.clear_texts()
 
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Pilih Video",
-            "",
-            "Video Files (*.mp4 *.mkv *.avi *.mov *.webm *.flv *.ts);;All Files (*)",
-        )
-        if not path:
+        self.load_video(path)
+
+    def browse_url(self):
+        dialog = DownloadByUrlDialog(self)
+        dialog.download_ready.connect(self.load_downloaded_video)
+        dialog.exec()
+
+    def load_downloaded_video(self, filepath: str):
+        if not filepath or not os.path.isfile(filepath):
+            QMessageBox.warning(
+                self,
+                "Download Error",
+                "File hasil download tidak ditemukan."
+            )
             return
 
-        self._video_path = path
-        self.file_label.setText(f"{path}")
+        if self.timeline.texts():
+            ans = QMessageBox.question(
+                self,
+                "Konfirmasi",
+                "Membuka video baru akan menghapus teks lama. Lanjutkan?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if ans != QMessageBox.Yes:
+                return
+            self.timeline.clear_texts()
+
+        self.load_video(filepath)
+
+    def load_video(self, path: str):
+        """Memuat video ke preview, timeline, dan thumbnail worker."""
+        if not path or not os.path.isfile(path):
+            QMessageBox.warning(
+                self,
+                "File Tidak Valid",
+                "File video tidak ditemukan."
+            )
+            return
+
+        self._video_path = os.path.abspath(path)
+        self.file_label.setText(self._video_path)
+
         self.log("=" * 60)
-        self.log(f"Sumber: {path}")
+        self.log(f"Sumber: {self._video_path}")
 
         if self.thumb_worker and self.thumb_worker.isRunning():
             self.thumb_worker.cancel()
             self.thumb_worker.wait(1000)
+        self.thumb_worker = None
 
         self.timeline.clear_thumbnails()
         self.preview_widget.clear()
 
         try:
-            dur, _, has_video = probe_media(path)
+            dur, _, has_video = probe_media(self._video_path)
         except Exception as exc:
             self.file_label.setText(
-                f"Sumber: {path} — gagal probe ({exc})"
+                f"Sumber: {self._video_path} — gagal probe ({exc})"
             )
             self._duration = 0.0
             self.timeline.set_duration(0.0)
@@ -467,7 +1074,7 @@ class CutterPage(QWidget):
 
         if not has_video:
             self.file_label.setText(
-                f"Sumber: {path} — file tidak memiliki video stream"
+                f"Sumber: {self._video_path} — file tidak memiliki video stream"
             )
             self._duration = 0.0
             self.timeline.set_duration(0.0)
@@ -478,14 +1085,17 @@ class CutterPage(QWidget):
         self.start_input.setText(_fmt_time(0.0))
         self.end_input.setText(_fmt_time(dur))
 
-        self.preview_widget.load(path)
+        self.preview_widget.load(self._video_path)
 
         from core import thumbnails
+
         times = thumbnails.plan_thumbnail_times(dur)
         self.timeline.set_thumbnails_count(len(times))
         self._update_thumb_status(f"Memuat 0/{len(times)} thumbnail")
 
-        self.thumb_worker = ThumbnailWorker(path, dur, len(times))
+        self.thumb_worker = ThumbnailWorker(
+            self._video_path, dur, len(times)
+        )
         self.thumb_worker.thumbnail_ready.connect(self._on_thumbnail_ready)
         self.thumb_worker.finished_signal.connect(self._on_thumbnails_done)
         self.thumb_worker.start()
