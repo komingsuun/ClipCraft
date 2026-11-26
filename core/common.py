@@ -410,6 +410,7 @@ class CustomTitleBar(QWidget):
         # Icon
         icon = QLabel()
         icon.setObjectName("titleBarIcon")
+        icon.setStyleSheet("QLabel { background-color: transparent; }")
 
         pixmap = QPixmap("./assets/clip_craft_square.png")
         if not pixmap.isNull():
@@ -427,6 +428,7 @@ class CustomTitleBar(QWidget):
         # Title
         self.title_label = QLabel(title)
         self.title_label.setObjectName("titleBarText")
+        self.title_label.setStyleSheet("QLabel { background-color: transparent; }")
         inner.addWidget(self.title_label)
 
         inner.addStretch()
