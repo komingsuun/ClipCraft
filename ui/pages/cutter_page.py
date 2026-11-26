@@ -83,7 +83,7 @@ class DownloadByUrlDialog(QDialog):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        self._title_bar = CustomTitleBar(self, only_close=True)
+        self._title_bar = CustomTitleBar(self, title="ClipCraft | Video cutter for video URL", only_close=True)
         main_layout.addWidget(self._title_bar)
 
         # ---------------- Body ----------------
@@ -162,14 +162,16 @@ class DownloadByUrlDialog(QDialog):
         progress_frame = QFrame()
         progress_frame.setObjectName("progressFrame")
         pl = QVBoxLayout(progress_frame)
-        pl.setContentsMargins(10, 8, 10, 8)
-        pl.setSpacing(6)
+        pl.setContentsMargins(2, 1, 2, 1)
+        pl.setSpacing(2)
         self.status_label = QLabel("Siap")
         self.status_label.setObjectName("statusLabel")
         pl.addWidget(self.status_label)
         self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(False)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setMaximumHeight(3)
         pl.addWidget(self.progress_bar)
         self.detail_label = QLabel("Kecepatan: -   |   ETA: -")
         self.detail_label.setObjectName("detailLabel")
@@ -199,7 +201,7 @@ class DownloadByUrlDialog(QDialog):
         footer.setContentsMargins(5, 5, 5, 5)
         footer.setSpacing(8)
 
-        self.btn_download = QPushButton("Download")
+        self.btn_download = QPushButton("Fetch")
         self.btn_download.setMaximumWidth(100)
         self.btn_download.clicked.connect(self.download)
 
@@ -208,15 +210,15 @@ class DownloadByUrlDialog(QDialog):
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self.cancel_download)
 
-        self.btn_close = QPushButton("Tutup")
-        self.btn_close.setMaximumWidth(100)
-        self.btn_close.clicked.connect(self.finish_dialog)
+        # self.btn_close = QPushButton("Tutup")
+        # self.btn_close.setMaximumWidth(100)
+        # self.btn_close.clicked.connect(self.finish_dialog)
 
         footer.addWidget(self.most_played_cb)
         footer.addStretch()
         footer.addWidget(self.btn_download)
         footer.addWidget(self.btn_cancel)
-        footer.addWidget(self.btn_close)
+        # footer.addWidget(self.btn_close)
 
         main_layout.addWidget(btn_frame)
         self.setLayout(main_layout)
@@ -283,7 +285,7 @@ class DownloadByUrlDialog(QDialog):
     def _set_busy(self, busy: bool, status=None):
         self.btn_download.setEnabled(not busy)
         self.btn_cancel.setEnabled(busy)
-        self.btn_close.setEnabled(not busy)
+        # self.btn_close.setEnabled(not busy)
         if status:
             self.status_label.setText(status)
 
@@ -471,7 +473,7 @@ class DownloadByUrlDialog(QDialog):
     def on_finished(self, success: bool, info: dict):
         self.btn_download.setEnabled(True)
         self.btn_cancel.setEnabled(False)
-        self.btn_close.setEnabled(True)
+        # self.btn_close.setEnabled(True)
 
         self.worker = None
         self._reset_most_played()
