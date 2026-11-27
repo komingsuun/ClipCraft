@@ -5,7 +5,8 @@ from PySide6.QtWidgets import (
     QStackedWidget, QVBoxLayout, QWidget, QSizeGrip, QFrame, QSizePolicy,
 )
 
-from core.common import STYLESHEET, CustomTitleBar
+from core.common import STYLESHEET
+from ui.widgets.custom_title_bar import CustomTitleBar
 from ui.pages.compression_page import CompressionPage
 from ui.pages.cutter_page import CutterPage
 from ui.pages.downloader_page import DownloaderPage

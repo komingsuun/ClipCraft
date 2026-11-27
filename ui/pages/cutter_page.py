@@ -10,13 +10,14 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget, QSizePolicy, QDialog, QToolBar, QToolButton,
 )
 
-from core.common import CustomTitleBar, STYLESHEET
+from core.common import STYLESHEET
 from core.config import load_config
 from core.downloader import COOKIE_BROWSERS
 from core.ffmpeg import probe_media
 from core.segment_workers import HeatmapCheckWorker, MostPlayedDownloadWorker
 from core.video_cutter import ensure_cut_dir
 from core.workers import CutterWorker, TextBurnInWorker, ThumbnailWorker, DownloadWorker
+from ui.widgets.custom_title_bar import CustomTitleBar
 from ui.widgets.log_widget import LogWidget
 from ui.widgets.timeline_widget import TimelineWidget
 from ui.widgets.video_preview_widget import VideoPreviewWidget
