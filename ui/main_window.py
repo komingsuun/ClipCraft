@@ -51,7 +51,7 @@ class MainWindow(QMainWindow):
         # ==== Body (sidebar + pages) ====
         body = QWidget()
         body_layout = QHBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setContentsMargins(5, 0, 0, 5)
         body_layout.setSpacing(0)
 
         root_layout.addWidget(body, stretch=1)
@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
 
         side_layout.addStretch()
         side_layout.addWidget(
-            QLabel("v0.1 — ClipCraft", objectName="detailLabel")
+            QLabel("v1.3.0 — ClipCraft", objectName="detailLabel")
         )
 
         body_layout.addWidget(sidebar)
