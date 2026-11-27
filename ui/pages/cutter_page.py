@@ -54,11 +54,14 @@ class DownloadByUrlDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet(STYLESHEET)
         self.setWindowFlags(
             QtCore.Qt.WindowType.Dialog
             | QtCore.Qt.WindowType.FramelessWindowHint
+            | QtCore.Qt.WindowType.Popup
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setModal(True)
         self._drag_pos = None
 
         # Pastikan folder tmp ada.
@@ -80,10 +83,11 @@ class DownloadByUrlDialog(QDialog):
         main_frame.setFrameShadow(QFrame.Shadow.Raised)
 
         main_layout = QVBoxLayout(main_frame)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(10, 0, 10, 0)
         main_layout.setSpacing(0)
 
-        self._title_bar = CustomTitleBar(self, title="ClipCraft | Video cutter for video URL", only_close=True)
+        self._title_bar = CustomTitleBar(self, title="ClipCraft | Cutter for video URL", only_close=True)
+        self._title_bar.setStyleSheet("font-size: 16px; font-weight: 600;")
         main_layout.addWidget(self._title_bar)
 
         # ---------------- Body ----------------
@@ -92,17 +96,17 @@ class DownloadByUrlDialog(QDialog):
         frame.setFrameShadow(QFrame.Shadow.Raised)
         frame.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         frame.setStyleSheet(
-            "background-color: rgba(30, 30, 30, 0.8); padding: 10px;"
+            "background-color: rgb(30, 30, 30); padding: 10px;"
         )
         body = QVBoxLayout(frame)
-        body.setContentsMargins(5, 15, 5, 15)
-        body.setSpacing(8)
+        body.setContentsMargins(0, 20, 0, 0)
+        body.setSpacing(10)
 
         # URL
         url_row = QHBoxLayout()
         label_url = QLabel("URL Video")
         label_url.setObjectName("label_input_url")
-        label_url.setStyleSheet("background-color: transparent;")
+        label_url.setStyleSheet("background-color: transparent; border: 1px")
         url_row.addWidget(label_url)
 
         self.input_url = QLineEdit(frame)
@@ -128,7 +132,8 @@ class DownloadByUrlDialog(QDialog):
         self.cookies_combo.setMinimumWidth(160)
         opt_row.addWidget(self.cookies_combo)
 
-        opt_row.addSpacing(16)
+        opt_row.setContentsMargins(0, 10, 0, 10)
+        opt_row.setSpacing(10)
         opt_row.addWidget(self._label("Kualitas"))
         self.compression_combo = QtWidgets.QComboBox()
         self.compression_combo.addItem("Original — tanpa kompresi", "Original")
@@ -149,6 +154,7 @@ class DownloadByUrlDialog(QDialog):
         cb_row = QHBoxLayout()
         self.most_played_cb = QCheckBox("YT Most Played Segment")
         self.most_played_cb.setObjectName("most_played_cb")
+        self.most_played_cb.setStyleSheet("color: #000000; background-color: transparent; font-weight: 600; font-size: 14px;")
         self.most_played_cb.setToolTip(
             "Periksa heatmap YouTube dan unduh segmen dengan pemutaran "
             "tertinggi. YouTube only!"
@@ -161,11 +167,17 @@ class DownloadByUrlDialog(QDialog):
         # Progress
         progress_frame = QFrame()
         progress_frame.setObjectName("progressFrame")
+        progress_frame.setStyleSheet("""
+            border: 1px solid grey;
+            border-radius: 8px;
+            padding: 8px;
+        """)
         pl = QVBoxLayout(progress_frame)
         pl.setContentsMargins(2, 1, 2, 1)
-        pl.setSpacing(2)
+        pl.setSpacing(0)
         self.status_label = QLabel("Siap")
         self.status_label.setObjectName("statusLabel")
+        self.status_label.setStyleSheet("""border: transparent;""")
         pl.addWidget(self.status_label)
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(False)
@@ -175,50 +187,58 @@ class DownloadByUrlDialog(QDialog):
         pl.addWidget(self.progress_bar)
         self.detail_label = QLabel("Kecepatan: -   |   ETA: -")
         self.detail_label.setObjectName("detailLabel")
+        self.detail_label.setStyleSheet("""border: transparent;""")
         pl.addWidget(self.detail_label)
         body.addWidget(progress_frame)
 
         # Log
         self.log_output = LogWidget()
-        self.log_output.setMaximumHeight(110)
+        self.log_output.setMaximumHeight(70)
         body.addWidget(self.log_output)
 
         main_layout.addWidget(frame, stretch=1)
 
         # ---------------- Footer ----------------
         btn_frame = QFrame()
+        btn_frame.setMaximumHeight(50)
         btn_frame.setFrameShape(QFrame.Shape.StyledPanel)
         btn_frame.setFrameShadow(QFrame.Shadow.Sunken)
         btn_frame.setStyleSheet(
             """
-            background-color: rgba(30, 30, 30, 0.8);
+            background-color: rgba(255, 255, 255, 0.8);
             padding: 10px;
             border-bottom-left-radius: 8px;
             border-bottom-right-radius: 8px;
             """
         )
         footer = QHBoxLayout(btn_frame)
-        footer.setContentsMargins(5, 5, 5, 5)
-        footer.setSpacing(8)
+        footer.setContentsMargins(0, 0, 0, 0)
+        footer.setSpacing(5)
 
         self.btn_download = QPushButton("Fetch")
-        self.btn_download.setMaximumWidth(100)
+        self.btn_download.setStyleSheet("color: #000000; font-weight: 600; font-size: 14px;")
+        self.btn_download.setMinimumSize(QtCore.QSize(100, 35))
+        self.btn_download.setMaximumSize(QtCore.QSize(100, 35))
         self.btn_download.clicked.connect(self.download)
 
         self.btn_cancel = QPushButton("Batalkan")
-        self.btn_cancel.setMaximumWidth(100)
+        self.btn_cancel.setStyleSheet("font-weight: 600; font-size: 14px;")
+        self.btn_cancel.setMaximumSize(QtCore.QSize(100, 35))
+        self.btn_cancel.setMinimumSize(QtCore.QSize(100, 35))
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self.cancel_download)
 
-        # self.btn_close = QPushButton("Tutup")
-        # self.btn_close.setMaximumWidth(100)
-        # self.btn_close.clicked.connect(self.finish_dialog)
+        self.btn_close = QPushButton("Tutup")
+        self.btn_close.setStyleSheet("font-weight: 600; font-size: 14px; color: #000000;")
+        self.btn_close.setMaximumSize(QtCore.QSize(100, 35))
+        self.btn_close.setMinimumSize(QtCore.QSize(100, 35))
+        self.btn_close.clicked.connect(self.finish_dialog)
 
         footer.addWidget(self.most_played_cb)
         footer.addStretch()
         footer.addWidget(self.btn_download)
         footer.addWidget(self.btn_cancel)
-        # footer.addWidget(self.btn_close)
+        footer.addWidget(self.btn_close)
 
         main_layout.addWidget(btn_frame)
         self.setLayout(main_layout)
@@ -285,7 +305,7 @@ class DownloadByUrlDialog(QDialog):
     def _set_busy(self, busy: bool, status=None):
         self.btn_download.setEnabled(not busy)
         self.btn_cancel.setEnabled(busy)
-        # self.btn_close.setEnabled(not busy)
+        self.btn_close.setEnabled(not busy)
         if status:
             self.status_label.setText(status)
 
@@ -473,7 +493,7 @@ class DownloadByUrlDialog(QDialog):
     def on_finished(self, success: bool, info: dict):
         self.btn_download.setEnabled(True)
         self.btn_cancel.setEnabled(False)
-        # self.btn_close.setEnabled(True)
+        self.btn_close.setEnabled(True)
 
         self.worker = None
         self._reset_most_played()
@@ -976,7 +996,7 @@ class CutterPage(QWidget):
         self.load_video(path)
 
     def browse_url(self):
-        dialog = DownloadByUrlDialog(self)
+        dialog = DownloadByUrlDialog()
         dialog.download_ready.connect(self.load_downloaded_video)
         dialog.exec()
 
